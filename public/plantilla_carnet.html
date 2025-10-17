@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Carné Universitario UMG</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 0;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #e9ecef;
+      font-family: 'Segoe UI', Arial, sans-serif;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      width: 100%;
+      height: 100%;
+    }
+
+    .carnet {
+      width: 28cm;
+      height: 19.5cm;
+      background: linear-gradient(180deg, #f9fafb 0%, #e2e5ea 100%);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* === Marca de agua === */
+    .marca-agua {
+      position: absolute;
+      inset: 0;
+      background-image: url('{{LOGO}}');
+      background-repeat: no-repeat;
+      background-position: center;
+      background-size: 55%;
+      opacity: 0.06;
+      filter: grayscale(100%);
+      z-index: 0;
+    }
+
+    /* === Banda de versión (filtro/sin filtro) === */
+    .banda-version {
+      position: absolute;
+      top: 0;
+      right: 0;
+      background: {{BANDA_COLOR}};
+      color: #fff;
+      padding: 8px 18px;
+      font-size: 13px;
+      font-weight: 700;
+      border-bottom-left-radius: 12px;
+      z-index: 10;
+      letter-spacing: 0.5px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      text-transform: uppercase;
+    }
+
+    /* === Encabezado === */
+    .header {
+      background: #0b2e59;
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 40px;
+      height: 2.8cm;
+      z-index: 1;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .header-left img {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: white;
+      border: 2px solid #fff;
+    }
+
+    .header-text h1 {
+      font-size: 20px;
+      margin: 0;
+    }
+
+    .header-text span {
+      font-size: 13px;
+      opacity: 0.9;
+      font-style: italic;
+    }
+
+    .codigo {
+      background: #f5576c;
+      padding: 10px 20px;
+      border-radius: 10px;
+      color: #fff;
+      font-weight: bold;
+      font-size: 16px;
+    }
+
+    /* === Contenido === */
+    .content {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 45% 55%;
+      height: 17.2cm;
+      z-index: 1;
+    }
+
+    .foto {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #f8f9fa;
+      padding: 0.8cm;
+    }
+
+    .foto img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 12px;
+      border: 4px solid #0b2e59;
+      background: #dfe4ea;
+      box-shadow: 0 0 8px rgba(0,0,0,0.2);
+    }
+
+    .info {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 1cm 1.5cm;
+    }
+
+    .info-block {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .etiqueta {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: #555;
+      font-weight: 600;
+    }
+
+    .valor {
+      font-size: 17px;
+      font-weight: 700;
+      color: #000;
+    }
+
+    .estado {
+      background: #1db954;
+      color: white;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 6px 14px;
+      border-radius: 10px;
+      display: inline-block;
+      width: fit-content;
+    }
+
+    .qr {
+      text-align: center;
+    }
+
+    .qr img {
+      width: 130px;
+      height: 130px;
+      border: 3px solid #ccc;
+      border-radius: 10px;
+      background: #fff;
+    }
+
+    .qr small {
+      display: block;
+      font-size: 10px;
+      margin-top: 4px;
+      color: #333;
+      font-weight: 600;
+    }
+
+    /* === Pie === */
+    .footer {
+      background: #0b2e59;
+      color: #fff;
+      text-align: center;
+      font-size: 11px;
+      letter-spacing: 0.6px;
+      padding: 10px 0;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* === Leyenda institucional === */
+    .footer-note {
+      position: absolute;
+      bottom: 6px;
+      right: 12px;
+      font-size: 10px;
+      color: rgba(255,255,255,0.8);
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="carnet">
+    <div class="marca-agua"></div>
+    <div class="banda-version">{{FILTRO}}</div>
+
+    <div class="header">
+      <div class="header-left">
+        <img src="{{LOGO}}" alt="Logo UMG">
+        <div class="header-text">
+          <h1>UNIVERSIDAD MARIANO GÁLVEZ</h1>
+          <span>de Guatemala</span>
+        </div>
+      </div>
+      <div class="codigo">{{CODIGO}}</div>
+    </div>
+
+    <div class="content">
+      <div class="foto">
+        <img src="{{FOTO}}" alt="Foto del estudiante">
+      </div>
+
+      <div class="info">
+        <div class="info-block">
+          <div><span class="etiqueta">Nombre Completo</span><span class="valor">{{NOMBRE}}</span></div>
+          <div><span class="etiqueta">DPI</span><span class="valor">{{CEDULA}}</span></div>
+          <div><span class="etiqueta">Teléfono</span><span class="valor">{{TELEFONO}}</span></div>
+          <div><span class="etiqueta">Correo</span><span class="valor">{{CORREO}}</span></div>
+        </div>
+        <div class="estado">ACTIVO ✅</div>
+        <div class="qr">
+          <img src="{{QR}}" alt="Código QR">
+          <small>CARNÉ DIGITAL UMG 2025</small>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer">
+      CARNÉ UNIVERSITARIO — VÁLIDO DURANTE EL CICLO ACADÉMICO 2025
+      <span class="footer-note">Generado por el Sistema de Autenticación UMG</span>
+    </div>
+  </div>
+</body>
+</html>

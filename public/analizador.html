@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>UMG | Analizador Léxico Inteligente</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <style>
+    body {
+      background: linear-gradient(135deg, #002244, #004b8d);
+      font-family: 'Poppins', sans-serif;
+      color: #fff;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #001b3a;
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #fff;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    }
+
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+    }
+
+    main {
+      flex: 1;
+      padding: 2rem;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.1);
+      border-radius: 15px;
+      padding: 2rem;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      color: #fff;
+    }
+
+    textarea {
+      width: 100%;
+      height: 180px;
+      border-radius: 10px;
+      border: none;
+      padding: 1rem;
+      resize: none;
+      outline: none;
+      background: rgba(255,255,255,0.2);
+      color: #fff;
+    }
+
+    .btn {
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .resultados {
+      background: rgba(255,255,255,0.1);
+      padding: 1.5rem;
+      border-radius: 10px;
+      margin-top: 1.5rem;
+      color: #fff;
+    }
+
+    footer {
+      background: #001b3a;
+      color: #ccc;
+      text-align: center;
+      padding: 10px 0;
+      font-size: 0.85rem;
+    }
+
+    hr { border-color: rgba(255,255,255,0.2); }
+
+    #videoPreview {
+      border: 3px solid rgba(255,255,255,0.3);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 360px;
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <h1><i class="fas fa-language me-2"></i>Analizador Léxico UMG</h1>
+    <button id="cerrar-sesion" class="btn btn-danger btn-sm">
+      <i class="fas fa-sign-out-alt me-1"></i> Cerrar sesión
+    </button>
+  </header>
+
+  <main>
+    <div class="container">
+      <div class="card">
+        <div id="info-usuario" class="alert text-center mb-4" style="display:none;"></div>
+
+        <!-- 📷 Vista para reconocimiento facial -->
+        <div class="text-center mb-4" id="seccion-facial" style="display:none;">
+          <video id="videoPreview" autoplay></video>
+          <div class="mt-3">
+            <button id="btnCapturarRostro" class="btn btn-warning">
+              <i class="fas fa-camera me-2"></i> Verificar rostro
+            </button>
+          </div>
+        </div>
+
+        <form id="analyzer-form" enctype="multipart/form-data" style="display:none;">
+          <div class="mb-3">
+            <label class="form-label"><i class="fas fa-file-alt me-2"></i>Seleccionar archivo (.txt)</label>
+            <input type="file" name="archivo" id="archivo" class="form-control" accept=".txt" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label"><i class="fas fa-globe me-2"></i>Idioma del texto</label>
+            <select name="idioma" id="idioma" class="form-select">
+              <option value="es">Español</option>
+              <option value="en">Inglés</option>
+              <option value="ru">Ruso</option>
+              <option value="zh">Chino</option>
+              <option value="ar">Árabe</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label"><i class="fas fa-eye me-2"></i>Vista previa del texto</label>
+            <textarea id="vista-previa" placeholder="El texto cargado aparecerá aquí..." readonly></textarea>
+          </div>
+
+          <button type="submit" class="btn btn-success w-100">
+            <i class="fas fa-search me-2"></i>Procesar Análisis
+          </button>
+        </form>
+
+        <div id="resultados" class="resultados mt-4" style="display:none;"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>© 2025 Universidad Mariano Gálvez - Proyecto Lenguajes Formales</footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+
+<script>
+  const infoUsuario = document.getElementById("info-usuario");
+  const resultados = document.getElementById("resultados");
+  const seccionFacial = document.getElementById("seccion-facial");
+  const analyzerForm = document.getElementById("analyzer-form");
+  const video = document.getElementById("videoPreview");
+
+  // ==========================
+  // 🔍 Login con QR o sesión activa
+  // ==========================
+  const params = new URLSearchParams(window.location.search);
+  const codigoQR = params.get("codigo");
+
+  if (codigoQR) {
+    infoUsuario.style.display = "block";
+    infoUsuario.className = "alert alert-info text-center";
+    infoUsuario.innerHTML = `<b>🔍 Verificando identidad con QR...</b>`;
+
+    fetch("/api/login-qr", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codigo: codigoQR })
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data.success) {
+          infoUsuario.classList.replace("alert-info", "alert-success");
+          infoUsuario.innerHTML = `✅ Bienvenido <b>${data.usuario.nombre_completo}</b> <br><small>Inicio de sesión por QR exitoso.</small>`;
+          sessionStorage.setItem("sesionActiva", JSON.stringify(data.usuario));
+          analyzerForm.style.display = "block";
+        } else {
+          infoUsuario.classList.replace("alert-info", "alert-danger");
+          infoUsuario.innerHTML = `❌ Código QR inválido o no registrado.`;
+        }
+      })
+      .catch(() => {
+        infoUsuario.classList.replace("alert-info", "alert-danger");
+        infoUsuario.innerHTML = `⚠️ Error al conectar con el servidor.`;
+      });
+  } else {
+    const sesion = sessionStorage.getItem("sesionActiva");
+    if (sesion) {
+      const user = JSON.parse(sesion);
+      infoUsuario.style.display = "block";
+      infoUsuario.classList.add("alert-success");
+      infoUsuario.innerHTML = `✅ Sesión activa como <b>${user.nombre_completo}</b>`;
+      analyzerForm.style.display = "block";
+    } else {
+      infoUsuario.style.display = "block";
+      infoUsuario.classList.add("alert-warning");
+      infoUsuario.innerHTML = `
+        ⚠️ No hay sesión activa.<br>
+        <button id="btnLoginFace" class="btn btn-primary mt-3">
+          <i class="fas fa-camera me-2"></i> Iniciar con reconocimiento facial
+        </button>`;
+    }
+  }
+
+  // ==========================
+  // 📷 Login con rostro
+  // ==========================
+  document.addEventListener("click", (e) => {
+    if (e.target.id === "btnLoginFace") iniciarReconocimientoFacial();
+  });
+
+  async function iniciarReconocimientoFacial() {
+    seccionFacial.style.display = "block";
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    video.style.display = "block";
+
+    document.getElementById("btnCapturarRostro").onclick = async () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+      const imageData = canvas.toDataURL("image/jpeg");
+
+      const res = await fetch("/api/login-face", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imagen: imageData })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        infoUsuario.className = "alert alert-success text-center";
+        infoUsuario.innerHTML = `✅ Bienvenido <b>${data.usuario.nombre_completo}</b> <br><small>Reconocimiento facial exitoso.</small>`;
+        analyzerForm.style.display = "block";
+        seccionFacial.style.display = "none";
+        sessionStorage.setItem("sesionActiva", JSON.stringify(data.usuario));
+      } else {
+        infoUsuario.className = "alert alert-danger text-center";
+        infoUsuario.innerHTML = "❌ No se reconoció el rostro. Intenta de nuevo.";
+      }
+    };
+  }
+
+  // ==========================
+  // 📝 Vista previa del archivo
+  // ==========================
+  document.getElementById("archivo").addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = evt => {
+        document.getElementById("vista-previa").value = evt.target.result;
+      };
+      reader.readAsText(file);
+    }
+  });
+
+  // ==========================
+  // 🔐 Cerrar sesión
+  // ==========================
+  document.getElementById("cerrar-sesion").addEventListener("click", () => {
+    sessionStorage.removeItem("sesionActiva");
+    window.location.href = "home.html";
+  });
+</script>
+
+</body>
+</html>
