@@ -1,5 +1,3 @@
-//server
-
 // ============================
 // server.js — versión PRO optimizada con FaceAPI + PDF + QR + Correo + WhatsApp
 // ============================
@@ -10,25 +8,39 @@ const multer = require("multer");
 const nodemailer = require("nodemailer");
 const QRCode = require("qrcode");
 const puppeteer = require("puppeteer");
-const db = require("./database");
-// ============================
-// 💾 CONEXIÓN SECUNDARIA — BASE LOCAL analizador_db
-// ============================
-const mysql = require("mysql2");
-const dbAnalisis = mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "josesitolqls", // tu clave local
-  database: "analizador_db"
-});
+const nlp = require("compromise");
+require("dotenv").config();
 
-dbAnalisis.connect((err) => {
-  if (err) {
-    console.error("❌ Error conectando con analizador_db:", err.message);
-  } else {
+
+// ✅ Solo dos conexiones reales
+const dbCentral = require("./database");          // 🌐 base de datos central (nube)
+const dbAnalisis = require("./database_local.js"); // 💻 base de datos local (analizador_db)
+// Agregar después de: const nlp = require("compromise");
+
+const natural = require('natural');
+const stopword = require('stopword');
+const jschardet = require('jschardet');
+const validator = require('validator');
+
+// Configurar stemmer para español
+const stemmerEs = natural.PorterStemmerEs;
+const tokenizerEs = new natural.WordTokenizer();
+
+// 🔁 Conexión robusta con reintento automático a analizador_db
+async function conectarAnalizadorDB() {
+  try {
+    const [rows] = await dbAnalisis.query("SELECT 1");
     console.log("✅ Conectado exitosamente a la base de datos local analizador_db.");
+  } catch (err) {
+    console.error("❌ Error conectando con analizador_db:", err.message);
+    console.log("⏳ Reintentando conexión en 5 segundos...");
+    setTimeout(conectarAnalizadorDB, 5000);
   }
-});
+}
+
+conectarAnalizadorDB();
+
+
 
 const { Canvas, Image, ImageData, createCanvas, loadImage } = require("canvas");
 const faceapi = require("face-api.js");
@@ -42,6 +54,18 @@ const { spawn } = require("child_process");
 // ============================
 const app = express();
 const port = 3000;
+
+// ============================
+// 🧩 Configuración de sesión
+// ============================
+const session = require("express-session");
+
+app.use(session({
+  secret: "umg_secret_key_2025", // cambia por otra palabra secreta si quieres
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // false porque trabajas en http://localhost
+}));
 
 
 const faceRoutes = require("./routes/face_routes");
@@ -79,10 +103,15 @@ app.get("/", (req, res) => {
 // ============================
 // 📩 Registrar usuario (usa fn_encriptar_password en la BD)
 // ============================
+// ============================
+// 📩 Registrar usuario (usa fn_encriptar_password en la BD)
+// ============================
 app.post("/api/registrar", upload.single("photo"), async (req, res) => {
   try {
     const { nombre1, nombre2, nombre3, apellido1, apellido2, correo, telefono, cedula, filtro, password } = req.body;
     let fotoPath = null;
+
+    // 📸 Verificar foto
     if (req.file && req.file.path) {
       fotoPath = path.resolve(__dirname, req.file.path);
       console.log("📁 Foto subida correctamente:", fotoPath);
@@ -90,209 +119,215 @@ app.post("/api/registrar", upload.single("photo"), async (req, res) => {
       console.warn("⚠️ No se recibió archivo de foto en la solicitud.");
     }
 
+    // 🧾 Datos básicos
     const codigoQR = `UMG-QR-${Math.floor(100000 + Math.random() * 900000)}`;
     const nombreCompleto = [nombre1, nombre2, nombre3, apellido1, apellido2].filter(Boolean).join(" ");
     const usuario = `${nombre1}.${apellido1}`.toLowerCase();
 
-    // ============================ GENERAR QR ============================
     const qrPath = `public/uploads/${codigoQR}.png`;
     const qrURL = `http://localhost:${port}/analizador.html?codigo=${codigoQR}`;
     await QRCode.toFile(qrPath, qrURL);
     const qrBuffer = fs.readFileSync(qrPath);
 
-    // ============================ 🤖 Segmentación facial + aplicación de filtro alineado ============================
     let fotoFinalPath = fotoPath;
     let fotoFiltradaPath = null;
     let encodingFacial = null;
 
+    // 🧠 Procesar foto si existe
     if (fotoPath) {
       try {
-        // 1️⃣ Convertir imagen original a Base64
         const imageBuffer = fs.readFileSync(fotoPath);
         const imageBase64 = imageBuffer.toString("base64");
 
-        // 2️⃣ Enviar al servidor biométrico para segmentación
+        // 🔍 Segmentar rostro
         const response = await axios.post(
           "http://www.server.daossystem.pro:3405/Rostro/Segmentar",
           { RostroA: imageBase64 },
           { headers: { "Content-Type": "application/json" }, timeout: 10000 }
         );
 
-        // 3️⃣ Si el servidor devuelve rostro segmentado, lo guardamos
         if (response.data && response.data.rostro) {
           const imgData = Buffer.from(response.data.rostro, "base64");
           const segmentadoPath = path.resolve(__dirname, "public", "uploads", `${codigoQR}_rostro_segmentado.png`);
           fs.writeFileSync(segmentadoPath, imgData);
-          fotoFinalPath = segmentadoPath;
-          console.log("✅ Rostro segmentado correctamente.");
 
-          // 🎨 Aplicar filtro perfectamente alineado
-          if (filtro && filtro !== "ninguno") {
-            const filtroPath = path.resolve(__dirname, "filtros", `${filtro}.png`);
-            if (fs.existsSync(filtroPath)) {
-              console.log(`🎨 Aplicando filtro '${filtro}'...`);
+          // ✅ Crear copia filtrada personalizada
+          const filtradoPath = path.resolve(__dirname, "public", "uploads", `${codigoQR}_rostro_filtrado.png`);
+          const jimpImg = await Jimp.read(segmentadoPath);
 
-              const baseImg = await Jimp.read(fotoFinalPath);
-              const overlay = await Jimp.read(filtroPath);
-              const canvas = await canvasLoadImage(fotoFinalPath);
-              const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks();
+          const filtroSeleccionado = (filtro || "ninguno").toLowerCase();
+          console.log("🎨 Aplicando filtro:", filtroSeleccionado);
+
+          const overlayDir = path.join(__dirname, "filtros");
+          let overlayFile = "";
+
+          switch (filtroSeleccionado) {
+            case "perro": overlayFile = "perro.png"; break;
+            case "gato": overlayFile = "gato.png"; break;
+            case "lentes": overlayFile = "lentes.png"; break;
+            case "mapache": overlayFile = "mapache.png"; break;
+            default: overlayFile = ""; break;
+          }
+
+          // 📎 Aplicar overlay si existe
+          if (overlayFile) {
+            const overlayPath = path.join(overlayDir, overlayFile);
+            if (fs.existsSync(overlayPath)) {
+              // ✅ Detectar rostro y aplicar overlay con landmarks
+              const canvas = await canvasLoadImage(segmentadoPath);
+              const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
 
               if (detection && detection.landmarks) {
                 const landmarks = detection.landmarks;
-                const leftEye = landmarks.getLeftEye();
-                const rightEye = landmarks.getRightEye();
-                const mouth = landmarks.getMouth();
+                const jimpOverlay = await Jimp.read(overlayPath);
+                const imgW = jimpImg.bitmap.width;
 
-                const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
-                const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
-                const mouthCenterY = (mouth[3].y + mouth[9].y) / 2;
-                const faceHeight = mouthCenterY - eyeCenterY;
+                if (filtroSeleccionado === "lentes") {
+                  const leftEye = landmarks.getLeftEye();
+                  const rightEye = landmarks.getRightEye();
+                  const eyeCenterX = (leftEye[0].x + rightEye[3].x) / 2;
+                  const eyeCenterY = (leftEye[0].y + rightEye[3].y) / 2;
+                  const eyeWidth = Math.abs(rightEye[3].x - leftEye[0].x) * 2.4;
+                  jimpOverlay.resize(eyeWidth, Jimp.AUTO);
 
-                let offsetY = 0.35;
-                let scaleFactor = 2.0;
-                switch (filtro) {
-                  case "perro": offsetY = 0.35; scaleFactor = 2.0; break;
-                  case "gato": offsetY = 0.25; scaleFactor = 1.8; break;
-                  case "lentes": offsetY = 0.15; scaleFactor = 1.5; break;
-                  case "mapache": offsetY = 0.30; scaleFactor = 1.9; break;
+                  const posX = eyeCenterX - jimpOverlay.bitmap.width / 2;
+                  const posY = eyeCenterY - jimpOverlay.bitmap.height / 1.9;
+                  jimpImg.composite(jimpOverlay, posX, posY, { mode: Jimp.BLEND_SOURCE_OVER, opacitySource: 1 });
+                  console.log("🕶️ Filtro de lentes posicionado correctamente.");
+                } else if (["perro", "gato", "mapache"].includes(filtroSeleccionado)) {
+                  const jaw = landmarks.getJawOutline();
+                  const leftEye = landmarks.getLeftEye();
+                  const rightEye = landmarks.getRightEye();
+                  const nose = landmarks.getNose();
+
+                  // 📏 Calcula proporciones reales del rostro
+                  const faceHeight = Math.abs(jaw[8].y - leftEye[0].y) * 2.2; // más cobertura
+                  const faceWidth = Math.abs(rightEye[3].x - leftEye[0].x) * 2.4;
+
+                  const jimpOverlay = await Jimp.read(overlayPath);
+                  jimpOverlay.resize(faceWidth, faceHeight);
+
+                  // 📍 Centrar el filtro en la cabeza (entre ojos)
+                  const centerX = (leftEye[0].x + rightEye[3].x) / 2 - jimpOverlay.bitmap.width / 2;
+                  const faceHeightRef = Math.abs(jaw[8].y - leftEye[0].y);
+                  const centerY = leftEye[0].y - jimpOverlay.bitmap.height * 0.45 + faceHeightRef * 0.15;
+
+                  jimpImg.composite(jimpOverlay, centerX, centerY, {
+                    mode: Jimp.BLEND_SOURCE_OVER,
+                    opacitySource: 1,
+                  });
+
+                  console.log(`🐶 Filtross ${filtroSeleccionado} adaptado dinámicamente al rostro.`);
                 }
 
-                const overlayWidth = faceHeight * scaleFactor * 1.3;
-                const overlayHeight = faceHeight * scaleFactor * 1.2;
-                overlay.resize(overlayWidth, overlayHeight, Jimp.RESIZE_BILINEAR);
-                const overlayX = eyeCenterX - overlayWidth / 2;
-                const overlayY = eyeCenterY - overlayHeight * offsetY;
 
-                baseImg.composite(overlay, overlayX, overlayY, {
-                  mode: Jimp.BLEND_SOURCE_OVER,
-                  opacitySource: 0.95,
-                });
 
-                const filteredFilePath = path.resolve(__dirname, "public", "uploads", `${codigoQR}_rostro_filtrado.jpg`);
-                await baseImg.quality(90).writeAsync(filteredFilePath);
-
-                fotoFiltradaPath = filteredFilePath;
-                fotoFinalPath = filteredFilePath;
-                console.log(`✅ Imagen filtrada guardada como JPG en: ${filteredFilePath}`);
+                else {
+                  jimpImg.composite(jimpOverlay, 0, 0);
+                }
               } else {
-                console.warn("⚠️ Landmarks no detectados; aplicando filtro genérico centrado.");
-                overlay.resize(baseImg.bitmap.width, baseImg.bitmap.height);
-                baseImg.composite(overlay, 0, 0, { opacitySource: 0.85 });
-                const filteredFilePath = path.resolve(__dirname, "public", "uploads", `${codigoQR}_rostro_filtrado.jpg`);
-                await baseImg.quality(90).writeAsync(filteredFilePath);
-                fotoFiltradaPath = filteredFilePath;
-                fotoFinalPath = filteredFilePath;
+                console.warn("⚠️ No se pudieron obtener landmarks del rostro.");
               }
             } else {
-              console.warn(`⚠️ No se encontró el filtro: ${filtroPath}`);
+              console.warn(`⚠️ Archivo de filtro no encontrado: ${overlayFile}`);
             }
-          }
-        } else {
-          console.warn("⚠️ No se recibió rostro segmentado; usando imagen original sin filtro.");
-        }
-
-        // 4️⃣ Generar encoding facial
-        try {
-          const canvas = await canvasLoadImage(fotoFinalPath);
-          const detection = await faceapi
-            .detectSingleFace(canvas)
-            .withFaceLandmarks()
-            .withFaceDescriptor();
-
-          if (detection && detection.descriptor) {
-            encodingFacial = JSON.stringify(Array.from(detection.descriptor));
-            console.log("✅ Encoding facial generado correctamente.");
           } else {
-            console.warn("⚠️ No se detectó rostro para generar encoding facial.");
+            jimpImg.contrast(0.2).brightness(0.1);
           }
-        } catch (err) {
-          console.error("❌ Error generando encoding facial:", err.message);
-        }
 
+          await jimpImg.writeAsync(filtradoPath);
+          fotoFinalPath = segmentadoPath;
+          fotoFiltradaPath = filtradoPath;
+          console.log(`✅ Rostro segmentado y filtro "${filtroSeleccionado}" aplicado correctamente.`);
+        }
       } catch (error) {
-        console.error("❌ Error durante la segmentación o filtro:", error.message);
+        console.error("❌ Error interno en procesamiento de foto:", error);
+        return res.status(500).json({ success: false, message: "Error procesando la foto." });
       }
+    } // fin del if (fotoPath)
+
+    // 🧠 Generar encoding facial
+    const canvas = await canvasLoadImage(fotoFinalPath);
+    const detection = await faceapi.detectSingleFace(canvas).withFaceLandmarks().withFaceDescriptor();
+
+    if (detection && detection.descriptor) {
+      encodingFacial = JSON.stringify(Array.from(detection.descriptor));
+      console.log("✅ Encoding facial generado correctamente.");
     }
 
-    // ============================ INSERTA USUARIO ============================
+    // 💾 Guardar usuario en la BD
     const sqlUsuario = `CALL sp_registrar_usuario(?, ?, ?, ?, ?, ?, ?, ?, @p_resultado, @p_mensaje);`;
     const imgBase64 = fotoFinalPath ? fs.readFileSync(fotoFinalPath).toString("base64") : null;
 
-    db.query(
-      sqlUsuario,
-      [usuario, correo, nombreCompleto, password, telefono, imgBase64, 1, 1],
-      async (err) => {
-        if (err) {
-          console.error("❌ Error al guardar en usuarios:", err);
-          return res.status(500).json({ success: false, message: "Error al guardar usuario." });
-        }
-
-        const [rowsId] = await db.promise().query("SELECT id FROM usuarios WHERE email = ? LIMIT 1", [correo]);
-        const usuarioId = rowsId?.[0]?.id;
-
-        if (!usuarioId) {
-          console.error("❌ No se encontró el usuario recién insertado.");
-          return res.status(500).json({ success: false, message: "Usuario no encontrado tras el registro." });
-        }
-
-        console.log("🧍 Usuario ID:", usuarioId);
-
-        if (encodingFacial) {
-          try {
-            await db.promise().query(
-              `INSERT INTO autenticacion_facial (usuario_id, encoding_facial, imagen_referencia, activo, fecha_creacion)
-               VALUES (?, ?, ?, 1, NOW())`,
-              [usuarioId, encodingFacial, imgBase64]
-            );
-            console.log("✅ Registro facial guardado correctamente.");
-          } catch (err3) {
-            console.error("⚠️ Error al guardar autenticación facial:", err3);
-          }
-        } else {
-          console.warn("⚠️ No se generó encoding facial, registro facial omitido.");
-        }
-        // ============================ 🧾 GUARDAR CÓDIGO QR EN BD ============================
-        // 🧠 Generamos un hash único del código QR
-        const crypto = require("crypto");
-        const qrHash = crypto.createHash("sha256").update(codigoQR).digest("hex");
-
-        try {
-          await db.promise().query(
-            `INSERT INTO codigos_qr (usuario_id, codigo_qr, qr_hash, activo)VALUES (?, ?, ?, 1)`,
-            [usuarioId, codigoQR, qrHash]
-          );
-          console.log("✅ Código QR y hash guardados correctamente en BD.");
-        } catch (err4) {
-          console.error("⚠️ Error al guardar código QR:", err4);
-        }
-
-
-        await generarPDFsYEnviarCorreo({
-          nombre1,
-          apellido1,
-          nombreCompleto,
-          correo,
-          telefono,
-          cedula,
-          filtro,
-          imgOriginalPath: fotoPath,
-          imgFiltradaPath: fotoFiltradaPath,
-          qrBuffer,
-          codigoQR,
-          qrPath,
-        });
-
-        enviarWhatsApp(nombre1, apellido1, telefono, codigoQR);
-
-        res.json({
-          success: true,
-          message: "✅ Usuario registrado correctamente. QR vinculado al usuario.",
-        });
+    dbCentral.query(sqlUsuario, [usuario, correo, nombreCompleto, password, telefono, imgBase64, 1, 1], async (err) => {
+      if (err) {
+        console.error("❌ Error al guardar en usuarios:", err);
+        return res.status(500).json({ success: false, message: "Error al guardar usuario." });
       }
-    );
+
+      const [rowsId] = await dbCentral.promise().query("SELECT id FROM usuarios WHERE email = ? LIMIT 1", [correo]);
+      const usuarioId = rowsId?.[0]?.id;
+
+      if (!usuarioId) {
+        console.error("❌ No se encontró el usuario recién insertado.");
+        return res.status(500).json({ success: false, message: "Usuario no encontrado tras el registro." });
+      }
+
+      console.log("🧍 Usuario ID:", usuarioId);
+
+      if (encodingFacial) {
+        try {
+          await dbCentral.promise().query(
+            `INSERT INTO autenticacion_facial (usuario_id, encoding_facial, imagen_referencia, activo, fecha_creacion)
+             VALUES (?, ?, ?, 1, NOW())`,
+            [usuarioId, encodingFacial, imgBase64]
+          );
+          console.log("✅ Registro facial guardado correctamente.");
+        } catch (err3) {
+          console.error("⚠️ Error al guardar autenticación facial:", err3);
+        }
+      }
+
+      const crypto = require("crypto");
+      const qrHash = crypto.createHash("sha256").update(codigoQR).digest("hex");
+
+      try {
+        await dbCentral.promise().query(
+          `INSERT INTO codigos_qr (usuario_id, codigo_qr, qr_hash, activo)
+           VALUES (?, ?, ?, 1)`,
+          [usuarioId, codigoQR, qrHash]
+        );
+        console.log("✅ Código QR y hash guardados correctamente en BD.");
+      } catch (err4) {
+        console.error("⚠️ Error al guardar código QR:", err4);
+      }
+
+      await generarPDFsYEnviarCorreo({
+        nombre1,
+        apellido1,
+        nombreCompleto,
+        correo,
+        telefono,
+        cedula,
+        filtro,
+        imgOriginalPath: fotoPath,
+        imgFiltradaPath: fotoFiltradaPath,
+        qrBuffer,
+        codigoQR,
+        qrPath,
+      });
+
+      enviarWhatsApp(nombre1, apellido1, telefono, codigoQR);
+
+      res.json({
+        success: true,
+        message: "✅ Usuario registrado correctamente. QR vinculado al usuario.",
+      });
+    });
+
   } catch (error) {
-    console.error("❌ Error general en /api/registrar:", error);
-    res.status(500).json({ success: false, message: "Error general del servidor." });
+    console.error("❌ Error externo general en /api/registrar:", error);
+    res.status(500).json({ success: false, message: "Error general del servidor (externo)." });
   }
 });
 
@@ -303,9 +338,9 @@ app.post("/api/registrar", upload.single("photo"), async (req, res) => {
 // ============================
 // 🔐 LOGIN USUARIO (Base Centralizada con fn_encriptar_password)
 // ============================
+
 app.post("/api/login", async (req, res) => {
   try {
-    // ✅ 1. Capturar datos del body
     const { correo, password } = req.body;
     console.log("📥 Intentando login con:", correo, password);
 
@@ -316,10 +351,9 @@ app.post("/api/login", async (req, res) => {
       });
     }
 
-    // ✅ 2. Ejecutar procedimiento almacenado con los parámetros correctos
     const sql = `CALL sp_login_correo(?, ?, @p_resultado, @p_mensaje, @p_session_token);`;
 
-    db.query(sql, [correo, password], (err) => {
+    dbCentral.query(sql, [correo, password], (err) => {
       if (err) {
         console.error("❌ Error al ejecutar SP sp_login_correo:", err);
         return res.status(500).json({
@@ -328,66 +362,53 @@ app.post("/api/login", async (req, res) => {
         });
       }
 
-      // ✅ 3. Consultar los valores de salida del SP
-      db.query(
-        "SELECT @p_resultado AS resultado, @p_mensaje AS mensaje, @p_session_token AS token;",
-        (err2, rows) => {
-          if (err2) {
-            console.error("⚠️ Error al obtener resultados del SP:", err2);
-            return res.status(500).json({
-              success: false,
-              message: "Error interno del sistema.",
-            });
-          }
-
-          const { resultado, mensaje, token } = rows[0] || {};
-
-          console.log("🧾 Resultado SP:", rows[0]);
-
-          // ✅ 4. Validar resultado del SP
-          if (!resultado || resultado === 0) {
-            console.warn("⚠️ Login fallido:", mensaje);
-            return res.status(401).json({
-              success: false,
-              message: mensaje || "Credenciales inválidas.",
-            });
-          }
-
-          // ✅ 5. Si todo va bien
-          console.log(`✅ Login exitoso para ${correo}. Token: ${token}`);
-
-          // 🔹 Obtener los datos completos del usuario
-          db.query("SELECT id, nombre_completo, email, telefono FROM usuarios WHERE email = ? LIMIT 1", [correo], (err3, rows3) => {
-            if (err3 || !rows3.length) {
-              console.error("⚠️ No se pudo obtener información completa del usuario:", err3);
-              return res.json({
-                success: true,
-                message: mensaje || "Inicio de sesión correcto.",
-                token,
-                usuario: { correo }, // fallback
-              });
-            }
-
-            const user = rows3[0];
-            res.json({
-              success: true,
-              message: mensaje || "Inicio de sesión correcto.",
-              token,
-              usuario: user,
-            });
-          });
+      dbCentral.query("SELECT @p_resultado AS resultado, @p_mensaje AS mensaje, @p_session_token AS token;", (err2, rows) => {
+        if (err2) {
+          console.error("⚠️ Error al obtener resultados del SP:", err2);
+          return res.status(500).json({ success: false, message: "Error interno del sistema." });
         }
-      );
+
+        const { resultado, mensaje, token } = rows[0] || {};
+
+        if (!resultado || resultado === 0) {
+          console.warn("⚠️ Login fallido:", mensaje);
+          return res.status(401).json({ success: false, message: mensaje || "Credenciales inválidas." });
+        }
+
+        // ✅ Obtener datos del usuario
+        dbCentral.query("SELECT id, nombre_completo, email, telefono FROM usuarios WHERE email = ? LIMIT 1", [correo], (err3, rows3) => {
+          if (err3 || !rows3.length) {
+            console.error("⚠️ No se pudo obtener información del usuario:", err3);
+            return res.json({ success: true, message: mensaje || "Inicio de sesión correcto.", token, usuario: { correo } });
+          }
+
+          const user = rows3[0];
+
+          // 🧩 ✅ Guardar sesión del usuario logueado
+          req.session = req.session || {};
+          req.session.user = {
+            id_usuario: user.id,
+            nombre: user.nombre_completo,
+            correo: user.email
+          };
+
+          console.log(`✅ Sesión creada para ${user.nombre_completo} (${user.email})`);
+
+          // 🔙 Respuesta al frontend
+          res.json({
+            success: true,
+            message: mensaje || "Inicio de sesión correcto.",
+            token,
+            usuario: user
+          });
+        });
+      });
     });
   } catch (error) {
     console.error("❌ Error general en /api/login:", error);
-    res.status(500).json({
-      success: false,
-      message: "Error interno del servidor.",
-    });
+    res.status(500).json({ success: false, message: "Error interno del servidor." });
   }
 });
-
 
 
 
@@ -407,7 +428,8 @@ app.post("/api/login-qr", (req, res) => {
     WHERE q.codigo_qr = ? AND q.activo = 1
   `;
 
-  db.query(sql, [codigo], (err, results) => {
+  dbCentral.query(sql, [codigo], (err, results) => {
+
     if (err) {
       console.error("❌ Error en login QR:", err);
       return res.status(500).json({ success: false, message: "Error en el servidor" });
@@ -441,7 +463,7 @@ app.get("/verificar", (req, res) => {
     WHERE q.codigo_qr = ? AND q.activo = 1
   `;
 
-  db.query(sql, [codigo], (err, results) => {
+  dbCentral.query(sql, [codigo], (err, results) => {
     if (err || results.length === 0)
       return res.send("<h3>❌ QR no registrado o inválido.</h3>");
 
@@ -481,7 +503,7 @@ app.post("/api/login-face", upload.single("rostro"), async (req, res) => {
       WHERE a.activo = 1
     `;
 
-    db.query(query, async (err, results) => {
+    dbCentral.query(query, async (err, results) => {
       if (err) {
         console.error("Error al obtener datos faciales:", err);
         return res.status(500).json({ success: false, message: "Error en el servidor." });
@@ -509,7 +531,8 @@ app.post("/api/login-face", upload.single("rostro"), async (req, res) => {
         console.log(`✅ Rostro reconocido: ${mejorCoincidencia.nombre_completo} (distancia ${menorDistancia.toFixed(2)})`);
 
         // 🔹 Obtener datos completos del usuario (para incluir email y teléfono)
-        db.query(
+        // 🔹 Obtener datos completos del usuario (para incluir email y teléfono)
+        dbCentral.query(
           "SELECT id, nombre_completo, email, telefono FROM usuarios WHERE id = ? LIMIT 1",
           [mejorCoincidencia.usuario_id],
           (err2, rows2) => {
@@ -669,10 +692,16 @@ async function generarPDFsYEnviarCorreo({
     console.log("✅ PDF sin filtro generado:", pdfSinFiltroPath);
 
     // 7) Enviar correo
+    const port = process.env.PORT || 3000;
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
-      auth: { user: "joseemmanuelfelipefranco@gmail.com", pass: "mrmuwhetqsyxhend" },
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
     });
+
 
     await transporter.sendMail({
       from: '"UMG - Registro" <joseemmanuelfelipefranco@gmail.com>',
@@ -710,99 +739,302 @@ function enviarWhatsApp(nombre1, apellido1, telefono, codigoQR) {
 }
 
 // ============================
-// 🧠 ANALIZADOR LÉXICO MULTILINGÜE (Integrado con base local)
+// 🧠 ANALIZADOR LÉXICO MEJORADO - FUNCIONAL PARA ESPAÑOL
 // ============================
-const nlp = require("compromise");
-
 app.post("/analizar", upload.single("archivo"), async (req, res) => {
   try {
     const idioma = req.body.idioma?.toLowerCase() || "es";
     const idUsuario = req.body.id_usuario || null;
-    const contenido = fs.readFileSync(req.file.path, "utf8");
 
-    // 🔤 Separar palabras según idioma
-    let palabras;
-    if (idioma.includes("chino") || idioma === "zh") {
-      palabras = contenido.match(/[\p{Script=Han}]/gu) || [];
-    } else if (idioma.includes("ruso") || idioma === "ru") {
-      palabras = contenido.match(/[\p{Script=Cyrillic}]+/gu) || [];
-    } else if (idioma.includes("arabe") || idioma === "ar") {
-      palabras = contenido.match(/[\p{Script=Arabic}]+/gu) || [];
-      if (palabras.length === 0) {
-        const limpia = contenido.replace(/[^\p{Script=Arabic}\s]/gu, "").trim();
-        palabras = limpia.split(/\s+/).filter(Boolean);
-      }
-    } else {
-      palabras = contenido.match(/\b[\wáéíóúüñ]+\b/g) || [];
+    // ✅ Validaciones
+    if (!req.file) {
+      return res.status(400).json({ error: "No se proporcionó archivo" });
     }
 
-    const totalPalabras = palabras.length;
-    const totalCaracteres = contenido.length;
+    if (!req.file.originalname.endsWith('.txt')) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Solo se permiten archivos .txt" });
+    }
 
-    // 📊 Calcular frecuencia
-    const frecuencia = {};
-    palabras.forEach(p => {
-      const lower = p.toLowerCase();
-      frecuencia[lower] = (frecuencia[lower] || 0) + 1;
-    });
+    if (req.file.size > 5 * 1024 * 1024) { // 5MB
+      fs.unlinkSync(req.file.path);
+      return res.status(413).json({ error: "Archivo muy grande (máx. 5MB)" });
+    }
 
-    const topPalabras = Object.entries(frecuencia)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10);
-    const menosPalabras = Object.entries(frecuencia)
-      .sort((a, b) => a[1] - b[1])
-      .slice(0, 10);
+    // ✅ Detectar encoding automáticamente
+    const buffer = fs.readFileSync(req.file.path);
+    const deteccion = jschardet.detect(buffer);
+    const encoding = deteccion.encoding || 'utf8';
+    let contenido = buffer.toString(encoding);
 
-    // 🧠 NLP — obtener categorías
-    const doc = nlp(contenido);
-    const pronombres = doc.pronouns().out("array") || [];
-    const personas = doc.people().out("array") || [];
-    const lugares = doc.places().out("array") || [];
-    const verbos = doc.verbs().out("array") || [];
-    const sustantivos = doc.nouns().out("array") || [];
+    // ✅ Sanitizar contenido
+    contenido = contenido
+      .replace(/&[#A-Za-z0-9]+;/g, "")   // elimina entidades HTML (&...;)
+      .replace(/[^\wÁÉÍÓÚáéíóúñÑ\s.,!?/-]/g, "") // mantiene solo texto, números y signos básicos
+      .trim();
+    contenido = contenido.trim();
 
-    // 💾 Guardar resultados en base local analizador_db
+    if (contenido.length === 0) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "El archivo está vacío" });
+    }
+
+    console.log(`📝 Analizando archivo: ${req.file.originalname} (${idioma})`);
+
+    let resultado;
+
+    // ✅ Análisis según idioma
+    if (idioma === 'es' || idioma === 'español') {
+      resultado = analizarEspanol(contenido);
+    } else if (idioma === 'en' || idioma === 'inglés' || idioma === 'ingles') {
+      resultado = analizarIngles(contenido);
+    } else if (idioma === 'ru' || idioma === 'ruso') {
+      resultado = analizarRuso(contenido);
+    } else {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: "Idioma no soportado. Use: español, inglés o ruso" });
+    }
+
+    // ✅ Clasificaciones adicionales (aplica a todos los idiomas)
+    const adicionales = clasificacionesAdicionales(contenido);
+
+    // ✅ Respuesta completa
+    const respuesta = {
+      idioma,
+      ...resultado,
+      ...adicionales,
+      texto: contenido
+    };
+
+    // 💾 Guardar en base de datos local
     const sql = `
       INSERT INTO analisis (
         id_usuario, nombre_archivo, idioma, total_palabras, total_caracteres,
         pronombres_json, entidades_json, lemas_json, fecha
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW());
     `;
+
     dbAnalisis.query(sql, [
       idUsuario,
       req.file.originalname,
       idioma,
-      totalPalabras,
-      totalCaracteres,
-      JSON.stringify(pronombres),
-      JSON.stringify({ personas, lugares }),
-      JSON.stringify({ sustantivos, verbos })
+      respuesta.totalPalabras,
+      respuesta.totalCaracteres,
+      JSON.stringify(respuesta.pronombres || []),
+      JSON.stringify({ personas: respuesta.personas || [], lugares: respuesta.lugares || [] }),
+      JSON.stringify({ sustantivos: respuesta.sustantivos || [], verbos: respuesta.verbos || [] })
     ], (err) => {
       if (err) console.error("⚠️ Error guardando en analizador_db:", err.message);
       else console.log(`✅ Análisis guardado correctamente (${req.file.originalname})`);
     });
 
-    // 📤 Responder al cliente
-    res.json({
-      idioma,
-      totalPalabras,
-      totalCaracteres,
-      topPalabras,
-      menosPalabras,
-      pronombres,
-      personas,
-      lugares,
-      verbos,
-      sustantivos,
-      texto: contenido
-    });
+    res.json(respuesta);
+    fs.unlinkSync(req.file.path);
 
-    fs.unlinkSync(req.file.path); // elimina archivo temporal
   } catch (error) {
     console.error("❌ Error en /analizar:", error);
-    res.status(500).json({ error: "Error al procesar análisis" });
+    if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: "Error al procesar análisis: " + error.message });
   }
 });
+
+
+// ============================
+// 🔧 FUNCIONES AUXILIARES PARA ANÁLISIS
+// ============================
+
+// 📊 Análisis para ESPAÑOL (funcional)
+function analizarEspanol(contenido) {
+  // Tokenizar
+  const palabras = tokenizerEs.tokenize(contenido.toLowerCase());
+
+  // Pronombres personales en español
+  const PRONOMBRES_ES = ['yo', 'tú', 'él', 'ella', 'nosotros', 'nosotras',
+    'vosotros', 'vosotras', 'ellos', 'ellas', 'usted',
+    'ustedes', 'me', 'te', 'se', 'le', 'nos', 'os', 'les',
+    'mi', 'tu', 'su', 'nuestro', 'vuestro'];
+
+  const pronombres = [...new Set(palabras.filter(p => PRONOMBRES_ES.includes(p)))];
+
+  // ✅ Detectar personas (nombres propios - 2+ palabras capitalizadas)
+  const patronPersonas = /\b([A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+){1,3})\b/g;
+  const personasCandidatas = contenido.match(patronPersonas) || [];
+
+  // Filtrar nombres comunes en español
+  const NOMBRES_COMUNES = ['María', 'José', 'Juan', 'Ana', 'Carlos', 'Luis', 'Pedro',
+    'Mariano', 'Gálvez', 'García', 'Rodríguez', 'Martínez',
+    'González', 'López', 'Hernández', 'Pérez'];
+
+  const personas = [...new Set(personasCandidatas.filter(candidato => {
+    const palabrasNombre = candidato.split(' ');
+    return palabrasNombre.some(palabra => NOMBRES_COMUNES.includes(palabra));
+  }))];
+
+  // ✅ Detectar lugares
+  const LUGARES_ES = ['Guatemala', 'México', 'España', 'Argentina', 'Colombia', 'Chile',
+    'Perú', 'Venezuela', 'Ecuador', 'Bolivia', 'Paraguay', 'Uruguay',
+    'Costa Rica', 'Panamá', 'Cuba', 'República Dominicana', 'Honduras',
+    'El Salvador', 'Nicaragua', 'Ciudad de Guatemala', 'Antigua',
+    'Quetzaltenango', 'Mixco', 'Villa Nueva', 'Madrid', 'Barcelona',
+    'Buenos Aires', 'Bogotá', 'Lima', 'Santiago', 'Caracas'];
+
+  const lugares = [...new Set(
+    LUGARES_ES.filter(lugar => {
+      const regex = new RegExp(`\\b${lugar}\\b`, 'gi');
+      return regex.test(contenido);
+    })
+  )];
+
+  // ✅ Detectar verbos (terminaciones comunes)
+  const terminacionesVerbos = ['ar', 'er', 'ir', 'ando', 'iendo', 'ado', 'ido',
+    'aba', 'ía', 'ará', 'erá', 'irá'];
+  const verbosDetectados = palabras.filter(p =>
+    terminacionesVerbos.some(t => p.endsWith(t)) && p.length > 3
+  );
+
+  // ✅ Lematizar verbos (forma raíz)
+  const verbos = [...new Set(verbosDetectados.map(v => stemmerEs.stem(v)))].slice(0, 30);
+
+  // ✅ Detectar sustantivos (terminaciones comunes)
+  const terminacionesSustantivos = ['ción', 'sión', 'dad', 'tad', 'miento', 'ismo',
+    'ista', 'anza', 'encia', 'ancia'];
+  const sustantivosDetectados = palabras.filter(p =>
+    terminacionesSustantivos.some(t => p.endsWith(t)) ||
+    (p.length > 4 && !terminacionesVerbos.some(t => p.endsWith(t)))
+  );
+
+  // ✅ Lematizar sustantivos
+  const sustantivos = [...new Set(sustantivosDetectados.map(s => stemmerEs.stem(s)))].slice(0, 30);
+
+  // 📊 Calcular frecuencias (filtrar stopwords)
+  const stopwordsEs = ['el', 'la', 'los', 'las', 'un', 'una', 'unos', 'unas',
+    'de', 'del', 'al', 'a', 'en', 'por', 'para', 'con',
+    'sin', 'sobre', 'entre', 'que', 'como', 'pero', 'si',
+    'no', 'ni', 'y', 'o', 'u', 'es', 'son', 'está', 'están'];
+
+  const palabrasFiltradas = palabras.filter(p =>
+    p.length > 2 &&
+    !stopwordsEs.includes(p) &&
+    !/^\d+$/.test(p) &&        // excluye números puros
+    !/^[x#]+[a-z0-9]+$/i.test(p) // excluye tokens tipo x2f, &#...
+  );
+  const frecuencia = {};
+  palabrasFiltradas.forEach(p => {
+    frecuencia[p] = (frecuencia[p] || 0) + 1;
+  });
+
+  const topPalabras = Object.entries(frecuencia)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const menosPalabras = Object.entries(frecuencia)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 10);
+
+  // Estadísticas adicionales
+  const palabrasUnicas = Object.keys(frecuencia).length;
+  const densidadLexica = ((palabrasUnicas / palabras.length) * 100).toFixed(2) + '%';
+  const totalOraciones = (contenido.match(/[.!?]+/g) || []).length;
+
+  return {
+    totalPalabras: palabras.length,
+    totalCaracteres: contenido.length,
+    palabrasUnicas,
+    densidadLexica,
+    totalOraciones,
+    topPalabras,
+    menosPalabras,
+    pronombres,
+    personas,
+    lugares,
+    verbos,
+    sustantivos
+  };
+}
+
+// 📊 Análisis para INGLÉS (usa Compromise)
+function analizarIngles(contenido) {
+  const doc = nlp(contenido);
+  const palabras = contenido.match(/\b[a-zA-Z]+\b/g) || [];
+
+  // Frecuencias
+  const stopwordsEn = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at',
+    'to', 'for', 'of', 'with', 'by', 'from', 'is', 'are',
+    'was', 'were', 'been', 'be', 'have', 'has', 'had'];
+
+  const palabrasFiltradas = palabras
+    .map(p => p.toLowerCase())
+    .filter(p => p.length > 2 && !stopwordsEn.includes(p));
+
+  const frecuencia = {};
+  palabrasFiltradas.forEach(p => {
+    frecuencia[p] = (frecuencia[p] || 0) + 1;
+  });
+
+  const topPalabras = Object.entries(frecuencia)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10);
+
+  const menosPalabras = Object.entries(frecuencia)
+    .sort((a, b) => a[1] - b[1])
+    .slice(0, 10);
+
+  return {
+    totalPalabras: palabras.length,
+    totalCaracteres: contenido.length,
+    palabrasUnicas: Object.keys(frecuencia).length,
+    densidadLexica: ((Object.keys(frecuencia).length / palabras.length) * 100).toFixed(2) + '%',
+    totalOraciones: (contenido.match(/[.!?]+/g) || []).length,
+    topPalabras,
+    menosPalabras,
+    pronombres: doc.pronouns().out("array"),
+    personas: doc.people().out("array"),
+    lugares: doc.places().out("array"),
+    verbos: [...new Set(doc.verbs().toInfinitive().out("array"))].slice(0, 30),
+    sustantivos: [...new Set(doc.nouns().toSingular().out("array"))].slice(0, 30)
+  };
+}
+
+// 📊 Análisis para RUSO
+function analizarRuso(contenido) {
+  const palabras = contenido.match(/[\p{Script=Cyrillic}]+/gu) || [];
+
+  const frecuencia = {};
+  palabras.forEach(p => {
+    const lower = p.toLowerCase();
+    if (lower.length > 2) {
+      frecuencia[lower] = (frecuencia[lower] || 0) + 1;
+    }
+  });
+
+  return {
+    totalPalabras: palabras.length,
+    totalCaracteres: contenido.length,
+    palabrasUnicas: Object.keys(frecuencia).length,
+    densidadLexica: ((Object.keys(frecuencia).length / palabras.length) * 100).toFixed(2) + '%',
+    totalOraciones: (contenido.match(/[.!?]+/g) || []).length,
+    topPalabras: Object.entries(frecuencia).sort((a, b) => b[1] - a[1]).slice(0, 10),
+    menosPalabras: Object.entries(frecuencia).sort((a, b) => a[1] - b[1]).slice(0, 10),
+    pronombres: [],
+    personas: [],
+    lugares: [],
+    verbos: [],
+    sustantivos: []
+  };
+}
+
+// 📊 Clasificaciones adicionales (todos los idiomas)
+function clasificacionesAdicionales(contenido) {
+  return {
+    fechas: contenido.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/g) || [],
+    numeros: contenido.match(/\b\d+(?:\.\d+)?\b/g) || [],
+    emails: contenido.match(/\b[\w._%+-]+@[\w.-]+\.[a-z]{2,}\b/gi) || [],
+    urls: contenido.match(/https?:\/\/[^\s]+/gi) || [],
+    telefonos: contenido.match(/\b\d{4}[-\s]?\d{4}\b/g) || []
+  };
+}
 
 // ============================
 // 📄 GENERAR REPORTE PDF DEL ANÁLISIS
@@ -881,7 +1113,7 @@ app.post("/generar-pdf", async (req, res) => {
 
 
 // ============================
-// 📧 Enviar resultados del análisis por correo
+// 📧 Enviar resultados del análisis por correo (LEGACY - mantener compatibilidad)
 // ============================
 app.post("/enviar-correo", async (req, res) => {
   try {
@@ -891,7 +1123,6 @@ app.post("/enviar-correo", async (req, res) => {
     }
 
     // Crear PDF temporal del análisis
-    const PDFDocument = require("pdfkit");
     const pdfPath = path.join(__dirname, "public", "uploads", `analisis_${Date.now()}.pdf`);
     const doc = new PDFDocument();
     const stream = fs.createWriteStream(pdfPath);
@@ -912,39 +1143,38 @@ app.post("/enviar-correo", async (req, res) => {
     resultados.menosPalabras.forEach(([w, c]) => doc.text(`- ${w}: ${c}`));
     doc.moveDown();
 
-    doc.text(`Pronombres: ${resultados.pronombres.join(", ")}`);
-    doc.text(`Personas: ${resultados.personas.join(", ")}`);
-    doc.text(`Lugares: ${resultados.lugares.join(", ")}`);
-    doc.text(`Sustantivos: ${resultados.sustantivos.join(", ")}`);
-    doc.text(`Verbos: ${resultados.verbos.join(", ")}`).moveDown();
+    doc.text(`Pronombres: ${resultados.pronombres?.join(", ") || "N/A"}`);
+    doc.text(`Personas: ${resultados.personas?.join(", ") || "N/A"}`);
+    doc.text(`Lugares: ${resultados.lugares?.join(", ") || "N/A"}`);
+    doc.text(`Sustantivos: ${resultados.sustantivos?.join(", ") || "N/A"}`);
+    doc.text(`Verbos: ${resultados.verbos?.join(", ") || "N/A"}`).moveDown();
     doc.text("Texto original analizado:").moveDown();
     doc.font("Helvetica-Oblique").text(resultados.texto, { align: "justify" });
     doc.end();
 
     stream.on("finish", async () => {
-      // Configura tu correo de envío (usa el mismo que para carnés)
       const transporter = nodemailer.createTransport({
         service: "gmail",
         auth: {
-          user: "joseemmanuelfelipefranco@gmail.com",
-          pass: "mrmuwhetqsyxhend", // contraseña de app de Gmail
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS
         },
+
       });
 
       await transporter.sendMail({
         from: '"UMG - Analizador Léxico" <joseemmanuelfelipefranco@gmail.com>',
         to: correo,
-        cc: "proyecto.umg@gmail.com", // copia al correo del grupo
         subject: "📊 Resultados del Análisis Léxico UMG",
         html: `<p>Hola <b>${nombre}</b>,</p>
-               <p>Adjuntamos tu reporte en PDF con los resultados del análisis léxico realizado en el sistema UMG.</p>
+               <p>Adjuntamos tu reporte en PDF con los resultados del análisis léxico.</p>
                <p>Gracias por utilizar la plataforma.</p>`,
         attachments: [
           { filename: "analisis.pdf", path: pdfPath }
         ],
       });
 
-      fs.unlinkSync(pdfPath); // elimina PDF temporal
+      fs.unlinkSync(pdfPath);
       res.json({ success: true });
     });
 
@@ -952,6 +1182,122 @@ app.post("/enviar-correo", async (req, res) => {
     console.error("❌ Error al enviar correo:", error);
     res.status(500).json({ success: false, message: "Error interno del servidor" });
   }
+});
+// ============================
+// 📧💬 Enviar reporte por correo/WhatsApp (UNIFICADO)
+// ============================
+app.post("/enviar-reporte", async (req, res) => {
+  try {
+    const { medio, correo, nombre, telefono, resultados } = req.body;
+
+    if (!medio || !resultados) {
+      return res.status(400).json({ success: false, message: "Faltan datos obligatorios" });
+    }
+
+    // Validar medio
+    const mediosValidos = ['email', 'whatsapp', 'ambos'];
+    if (!mediosValidos.includes(medio)) {
+      return res.status(400).json({ success: false, message: "Medio no válido" });
+    }
+
+    // Generar PDF temporal
+    const pdfPath = path.join(__dirname, "public", "uploads", `reporte_${Date.now()}.pdf`);
+    const doc = new PDFDocument({ margin: 50 });
+    const stream = fs.createWriteStream(pdfPath);
+    doc.pipe(stream);
+
+    // Contenido del PDF
+    doc.fontSize(20).text("📊 REPORTE DE ANÁLISIS LÉXICO", { align: "center" });
+    doc.moveDown();
+    doc.fontSize(12)
+      .text(`Usuario: ${nombre || 'Anónimo'}`)
+      .text(`Correo: ${correo || 'N/A'}`)
+      .moveDown();
+
+    doc.text(`Idioma: ${resultados.idioma}`)
+      .text(`Total palabras: ${resultados.totalPalabras}`)
+      .text(`Total caracteres: ${resultados.totalCaracteres}`)
+      .moveDown();
+
+    doc.font("Helvetica-Bold").text("Top palabras más frecuentes:");
+    doc.font("Helvetica");
+    resultados.topPalabras.forEach(([w, c]) => doc.text(`  • ${w}: ${c}`));
+    doc.moveDown();
+
+    doc.font("Helvetica-Bold").text("Palabras menos frecuentes:");
+    doc.font("Helvetica");
+    resultados.menosPalabras.forEach(([w, c]) => doc.text(`  • ${w}: ${c}`));
+    doc.moveDown();
+
+    doc.text(`Pronombres: ${resultados.pronombres?.join(", ") || "N/A"}`);
+    doc.text(`Personas: ${resultados.personas?.join(", ") || "N/A"}`);
+    doc.text(`Lugares: ${resultados.lugares?.join(", ") || "N/A"}`);
+    doc.moveDown();
+
+    if (resultados.fechas && resultados.fechas.length) {
+      doc.text(`Fechas: ${resultados.fechas.join(", ")}`);
+    }
+    if (resultados.emails && resultados.emails.length) {
+      doc.text(`Emails: ${resultados.emails.join(", ")}`);
+    }
+
+    doc.moveDown();
+    doc.font("Helvetica-Bold").text("Texto analizado:");
+    doc.font("Helvetica").text(resultados.texto, { align: "justify" });
+    doc.end();
+
+    stream.on("finish", async () => {
+      // Enviar por correo
+      if (medio === 'email' || medio === 'ambos') {
+        if (!correo) {
+          fs.unlinkSync(pdfPath);
+          return res.status(400).json({ success: false, message: "Correo no proporcionado" });
+        }
+
+        const transporter = nodemailer.createTransport({
+          service: "gmail",
+          auth: {
+           user: process.env.EMAIL_USER,
+           pass: process.env.EMAIL_PASS
+          }
+        });
+
+        await transporter.sendMail({
+          from: '"UMG - Analizador Léxico" <joseemmanuelfelipefranco@gmail.com>',
+          to: correo,
+          subject: "📊 Reporte de Análisis Léxico - UMG",
+          html: `<p>Hola <b>${nombre}</b>,</p>
+                 <p>Adjuntamos tu reporte de análisis léxico en PDF.</p>
+                 <p>Gracias por utilizar el sistema UMG.</p>`,
+          attachments: [{ filename: "reporte_analisis.pdf", path: pdfPath }]
+        });
+
+        console.log(`✅ Reporte enviado por correo a ${correo}`);
+      }
+
+      // Enviar por WhatsApp
+      if (medio === 'whatsapp' || medio === 'ambos') {
+        if (!telefono) {
+          fs.unlinkSync(pdfPath);
+          return res.status(400).json({ success: false, message: "Teléfono no proporcionado" });
+        }
+
+        enviarWhatsApp(nombre.split(' ')[0] || 'Usuario', '', telefono, "Reporte de análisis léxico listo");
+        console.log(`✅ Notificación WhatsApp enviada a ${telefono}`);
+      }
+
+      fs.unlinkSync(pdfPath);
+      res.json({ success: true, message: `Reporte enviado correctamente por ${medio}` });
+    });
+
+  } catch (error) {
+    console.error("❌ Error enviando reporte:", error);
+    res.status(500).json({ success: false, message: "Error interno del servidor" });
+  }
+});
+
+app.get("/session", (req, res) => {
+  res.json(req.session?.user || { message: "Sin sesión activa" });
 });
 
 // ============================

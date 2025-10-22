@@ -1,0 +1,39 @@
+services:
+  # 🧠 Aplicación principal (Node.js con FaceAPI)
+  app:
+    build:
+      context: .
+      target: development  # 👈 usa la etapa "development" del Dockerfile
+    container_name: faceapi_app
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: 12345
+      DB_NAME: analizador_db
+      DB_PORT: 3306
+    volumes:
+      - .:/app:delegated        # 👈 mejora sincronización en Windows
+      - /app/node_modules       # evita sobreescribir dependencias
+    working_dir: /app
+    command: nodemon server.js  # 👈 nodemon recargará automáticamente
+
+  # 🐬 Base de datos MySQL 8
+  db:
+    image: mysql:8
+    container_name: db_faceapi
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 12345
+      MYSQL_DATABASE: db_faceapi
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql_data:/var/lib/mysql
+
+volumes:
+  mysql_data:

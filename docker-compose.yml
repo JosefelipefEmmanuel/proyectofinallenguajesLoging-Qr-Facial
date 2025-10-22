@@ -1,0 +1,49 @@
+services:
+  # 🧠 Aplicación principal (Node.js con FaceAPI + Analizador Léxico)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: faceapi_app_dev
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    environment:
+      # 🔹 Base central (usuarios / rostros)
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: 12345
+      DB_NAME: db_faceapi
+      DB_PORT: 3306
+
+      # 🔹 Base del Analizador Léxico
+      ANALISIS_DB_HOST: db
+      ANALISIS_DB_USER: root
+      ANALISIS_DB_PASSWORD: 12345
+      ANALISIS_DB_NAME: analizador_db
+      ANALISIS_DB_PORT: 3306
+
+    volumes:
+      - .:/app
+      - /app/node_modules
+    working_dir: /app
+    command: npm run dev
+
+  # 🐬 Base de datos MySQL 8 (multi-base)
+  db:
+    image: mysql:8
+    container_name: db_faceapi_dev
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 12345
+      MYSQL_DATABASE: db_faceapi
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql_data_dev:/var/lib/mysql
+      - ./init-mysql:/docker-entrypoint-initdb.d  # 👈 inicializa ambas DBs
+
+volumes:
+  mysql_data_dev:

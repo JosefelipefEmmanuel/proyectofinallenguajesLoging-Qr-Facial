@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,52 +16,110 @@
       display: flex;
       flex-direction: column;
     }
+
     header {
       background: #001b3a;
       padding: 1rem 2rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
     }
-    main { flex: 1; padding: 2rem; }
+
+    main {
+      flex: 1;
+      padding: 2rem;
+    }
+
     .card {
-      background: rgba(255,255,255,0.1);
+      background: rgba(255, 255, 255, 0.1);
       border-radius: 15px;
       padding: 2rem;
       backdrop-filter: blur(10px);
-      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
     }
-    textarea {
-      width: 100%; height: 180px;
-      border-radius: 10px; border: none;
-      padding: 1rem; resize: none;
-      background: rgba(255,255,255,0.2);
-      color: #fff;
+
+    .btn {
+      border-radius: 10px;
+      font-weight: 600;
     }
-    .btn { border-radius: 10px; font-weight: 600; }
+
     footer {
-      background: #001b3a; color: #ccc;
-      text-align: center; padding: 10px 0;
+      background: #001b3a;
+      color: #ccc;
+      text-align: center;
+      padding: 10px 0;
       font-size: 0.85rem;
     }
-    hr { border-color: rgba(255,255,255,0.2); }
+
+    hr {
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
     #videoPreview {
-      border: 3px solid rgba(255,255,255,0.3);
+      border: 3px solid rgba(255, 255, 255, 0.3);
       border-radius: 10px;
-      width: 100%; max-width: 360px; display: none;
+      width: 100%;
+      max-width: 360px;
+      display: none;
     }
-    .acciones-envio button {
-      margin: 8px; border-radius: 8px;
-      padding: 10px 20px; border: none; color: #fff;
-      transition: 0.2s;
+
+    mark.persona {
+      background: #b3e5fc;
+      color: #000;
     }
-    .btn-correo { background:#007bff; }
-    .btn-correo:hover { background:#0056b3; transform: scale(1.05); }
-    .btn-whatsapp { background:#25d366; }
-    .btn-whatsapp:hover { background:#1ebe5b; transform: scale(1.05); }
-    mark.persona{background:#b3e5fc;color:#000;}
-    mark.lugar{background:#dcedc8;color:#000;}
+
+    mark.lugar {
+      background: #dcedc8;
+      color: #000;
+    }
+
+    mark.email {
+      background: #fff9c4;
+      color: #000;
+    }
+
+    mark.fecha {
+      background: #ffccbc;
+      color: #000;
+    }
+
+    /* Loader */
+    .loader {
+      display: none;
+      text-align: center;
+      margin: 20px 0;
+    }
+
+    .spinner-border {
+      width: 3rem;
+      height: 3rem;
+    }
+
+    /* Modal personalizado */
+    .modal-content {
+      background: linear-gradient(135deg, #001b3a, #003366);
+      color: #fff;
+      border-radius: 15px;
+    }
+
+    .modal-header {
+      border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .modal-footer {
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    /* Error messages */
+    .error-message {
+      background: rgba(255, 0, 0, 0.2);
+      border-left: 4px solid #ff0000;
+      padding: 10px;
+      margin: 10px 0;
+      border-radius: 5px;
+      display: none;
+    }
   </style>
 </head>
 
@@ -76,6 +135,7 @@
     <div class="container">
       <div class="card">
         <div id="info-usuario" class="alert text-center mb-4" style="display:none;"></div>
+        <div id="error-message" class="error-message"></div>
 
         <!-- 📷 Reconocimiento facial -->
         <div class="text-center mb-4" id="seccion-facial" style="display:none;">
@@ -91,22 +151,35 @@
         <section id="panelAnalizador" style="display:none;">
           <form id="formAnalisis" enctype="multipart/form-data">
             <label class="form-label mt-2"><i class="fas fa-file-alt me-2"></i>Seleccionar archivo (.txt)</label>
-            <input type="file" name="archivo" class="form-control mb-3" accept=".txt" required>
+            <input type="file" name="archivo" id="archivoInput" class="form-control mb-3" accept=".txt" required>
+            <small class="text-white-50">Tamaño máximo: 5MB</small>
 
-            <label class="form-label"><i class="fas fa-globe me-2"></i>Idioma del texto</label>
-            <select name="idioma" class="form-select mb-3" required>
+            <label class="form-label mt-3"><i class="fas fa-globe me-2"></i>Idioma del texto</label>
+            <select name="idioma" id="idiomaSelect" class="form-select mb-3" required>
+              <option value="">Selecciona un idioma</option>
               <option value="es">Español</option>
               <option value="en">Inglés</option>
               <option value="ru">Ruso</option>
-              <option value="zh">Chino</option>
-              <option value="ar">Árabe</option>
             </select>
 
+            <!-- Loader -->
+            <div id="loader" class="loader">
+              <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Procesando...</span>
+              </div>
+              <p class="mt-2">⏳ Analizando texto...</p>
+            </div>
+
             <div class="d-flex flex-wrap justify-content-center gap-2 mt-3">
-              <button type="submit" class="btn btn-primary">⚡ Procesar</button>
-              <button type="button" id="guardar" class="btn btn-success">💾 Guardar</button>
-              <button type="button" id="limpiar" class="btn btn-danger">🧹 Limpiar</button>
-              <button type="button" id="exportar" class="btn btn-warning text-dark">📤 Exportar</button>
+              <button type="submit" id="btnProcesar" class="btn btn-primary">
+                <i class="fas fa-bolt me-1"></i> Procesar
+              </button>
+              <button type="button" id="limpiar" class="btn btn-danger">
+                <i class="fas fa-broom me-1"></i> Limpiar
+              </button>
+              <button type="button" id="exportar" class="btn btn-warning text-dark">
+                <i class="fas fa-file-pdf me-1"></i> Exportar PDF
+              </button>
             </div>
           </form>
 
@@ -115,219 +188,75 @@
             <hr>
             <div id="resumen"></div>
             <div id="textoResaltado" class="mt-3"></div>
-            <div class="acciones-envio text-center mt-4">
-              <button id="btnCorreo" class="btn-correo">📧 Enviar a correo</button>
-              <button id="btnWhatsApp" class="btn-whatsapp">💬 Enviar a WhatsApp</button>
-            </div>
           </div>
         </section>
       </div>
     </div>
   </main>
 
+  <!-- 📧 Modal de envío de reporte -->
+  <div class="modal fade" id="modalEnvioReporte" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">
+            <i class="fas fa-file-pdf me-2"></i>¿Deseas recibir el reporte en PDF?
+          </h5>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-center">Selecciona cómo deseas recibir tu reporte de análisis:</p>
+          <div class="d-grid gap-2">
+            <button class="btn btn-primary" onclick="enviarReporte('email')">
+              <i class="fas fa-envelope me-2"></i> Por Correo Electrónico
+            </button>
+            <button class="btn btn-success" onclick="enviarReporte('whatsapp')">
+              <i class="fab fa-whatsapp me-2"></i> Por WhatsApp
+            </button>
+            <button class="btn btn-info" onclick="enviarReporte('ambos')">
+              <i class="fas fa-paper-plane me-2"></i> Por Ambos
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+            <i class="fas fa-times me-1"></i> No, gracias
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <footer>© 2025 Universidad Mariano Gálvez - Proyecto Lenguajes Formales</footer>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="script.js"></script>
+  <script>
+    // 🧪 Forzar modo desarrollador para pruebas locales
+    document.addEventListener("DOMContentLoaded", () => {
+      const panel = document.getElementById("panelAnalizador");
+      const info = document.getElementById("info-usuario");
 
-<script>
-// ===========================
-// 🔐 Variables principales
-// ===========================
-const infoUsuario = document.getElementById("info-usuario");
-const panelAnalizador = document.getElementById("panelAnalizador");
-const resultados = document.getElementById("resultados");
-const seccionFacial = document.getElementById("seccion-facial");
-const video = document.getElementById("videoPreview");
-const params = new URLSearchParams(window.location.search);
-const codigoQR = params.get("codigo");
+      const sesionFake = {
+        id: 1,
+        nombre_completo: "Usuario Local de Prueba",
+        email: "local@umg.edu.gt",
+        telefono: "55555555",
+        token: "fake_token_local"
+      };
+      sessionStorage.setItem("sesionActiva", JSON.stringify(sesionFake));
 
-// ===========================
-// 🔍 Login con QR o sesión
-// ===========================
-if (codigoQR) {
-  infoUsuario.style.display = "block";
-  infoUsuario.className = "alert alert-info text-center";
-  infoUsuario.innerHTML = `<b>🔍 Verificando identidad con QR...</b>`;
+      if (panel) panel.style.display = "block";
+      if (info) {
+        info.className = "alert alert-success text-center";
+        info.innerHTML = `✅ Bienvenido <b>${sesionFake.nombre_completo}</b> (modo desarrollador)`;
+        info.style.display = "block";
+      }
 
-  fetch("/api/login-qr", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ codigo: codigoQR })
-  })
-  .then(res => res.json())
-  .then(data => {
-    if (data.success) {
-      sessionStorage.setItem("sesionActiva", JSON.stringify(data.usuario));
-      mostrarAnalizador(data.usuario);
-    } else {
-      infoUsuario.classList.replace("alert-info","alert-danger");
-      infoUsuario.innerHTML="❌ Código QR inválido o no registrado.";
-    }
-  })
-  .catch(() => {
-    infoUsuario.className="alert alert-danger";
-    infoUsuario.innerText="⚠️ Error al conectar con servidor.";
-  });
-} else {
-  const sesion = sessionStorage.getItem("sesionActiva");
-  if (sesion) {
-    const user = JSON.parse(sesion);
-    mostrarAnalizador(user);
-  } else {
-    infoUsuario.style.display = "block";
-    infoUsuario.className = "alert alert-warning text-center";
-    infoUsuario.innerHTML = `⚠️ No hay sesión activa.<br>
-      <button id="btnLoginFace" class="btn btn-primary mt-3">
-        <i class="fas fa-camera me-2"></i> Iniciar con reconocimiento facial
-      </button>`;
-  }
-}
-
-// ===========================
-// 📷 Reconocimiento facial
-// ===========================
-document.addEventListener("click", (e) => {
-  if (e.target.id === "btnLoginFace") iniciarReconocimientoFacial();
-});
-
-async function iniciarReconocimientoFacial() {
-  seccionFacial.style.display = "block";
-  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-  video.srcObject = stream;
-  video.style.display = "block";
-
-  document.getElementById("btnCapturarRostro").onclick = async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext("2d").drawImage(video, 0, 0);
-    const imageData = canvas.toDataURL("image/jpeg");
-
-    const res = await fetch("/api/login-face", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imagen: imageData })
+      console.log("🧪 Analizador activado automáticamente (modo desarrollador forzado)");
     });
+  </script>
 
-    const data = await res.json();
-    if (data.success) {
-      sessionStorage.setItem("sesionActiva", JSON.stringify(data.usuario));
-      mostrarAnalizador(data.usuario);
-      seccionFacial.style.display = "none";
-    } else {
-      infoUsuario.className = "alert alert-danger text-center";
-      infoUsuario.innerText = "❌ No se reconoció el rostro. Intenta de nuevo.";
-    }
-  };
-}
-
-// ===========================
-// ✅ Mostrar panel tras login
-// ===========================
-function mostrarAnalizador(user) {
-  infoUsuario.className = "alert alert-success text-center";
-  infoUsuario.innerHTML = `✅ Bienvenido <b>${user.nombre_completo}</b>`;
-  panelAnalizador.style.display = "block";
-}
-
-// ===========================
-// 🧠 Analizador Léxico
-// ===========================
-let datosActuales = null;
-
-document.getElementById("formAnalisis").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const formData = new FormData(e.target);
-  const usuario = JSON.parse(sessionStorage.getItem("sesionActiva") || "{}");
-  if (usuario?.id) formData.append("id_usuario", usuario.id);
-
-  const res = await fetch("/analizar", { method: "POST", body: formData });
-  const data = await res.json();
-  datosActuales = data;
-
-  resultados.style.display = "block";
-  document.getElementById("resumen").innerHTML = `
-    <p><b>Idioma:</b> ${data.idioma}</p>
-    <p><b>Total palabras:</b> ${data.totalPalabras}</p>
-    <p><b>Total caracteres:</b> ${data.totalCaracteres}</p>
-    <p><b>Top palabras:</b> ${data.topPalabras.map(([w,c]) => w + " (" + c + ")").join(", ")}</p>
-    <p><b>Menos frecuentes:</b> ${data.menosPalabras.map(([w,c]) => w + " (" + c + ")").join(", ")}</p>
-    <p><b>Pronombres:</b> ${data.pronombres.join(", ")}</p>
-    <p><b>Personas:</b> ${data.personas.join(", ")}</p>
-    <p><b>Lugares:</b> ${data.lugares.join(", ")}</p>
-    <p><b>Sustantivos:</b> ${data.sustantivos.join(", ")}</p>
-    <p><b>Verbos:</b> ${data.verbos.join(", ")}</p>`;
-
-  let texto = data.texto;
-  data.personas.forEach(p => texto = texto.replace(new RegExp(p, "gi"), `<mark class='persona'>${p}</mark>`));
-  data.lugares.forEach(l => texto = texto.replace(new RegExp(l, "gi"), `<mark class='lugar'>${l}</mark>`));
-  document.getElementById("textoResaltado").innerHTML = `<p>${texto}</p>`;
-});
-
-// 🧹 Limpiar resultados
-document.getElementById("limpiar").addEventListener("click", () => {
-  document.getElementById("resumen").innerHTML = "";
-  document.getElementById("textoResaltado").innerHTML = "";
-  resultados.style.display = "none";
-  datosActuales = null;
-});
-
-// 📤 Exportar análisis
-document.getElementById("exportar").addEventListener("click", () => {
-  if (!datosActuales) return alert("⚠️ Primero procesa un archivo.");
-  const d = datosActuales;
-  const blob = new Blob([JSON.stringify(d, null, 2)], { type: "application/json" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "analisis.json";
-  a.click();
-  URL.revokeObjectURL(a.href);
-});
-
-// 💾 Guardar resultados
-document.getElementById("guardar").addEventListener("click", () => {
-  alert("✅ Los resultados se guardan automáticamente en la base de datos.");
-});
-
-
-// 📧 Enviar resultados del análisis al correo del usuario logueado
-document.getElementById("btnCorreo").addEventListener("click", async () => {
-  if (!datosActuales) return alert("⚠️ Primero procesa un archivo antes de enviar.");
-
-  const usuario = JSON.parse(sessionStorage.getItem("sesionActiva") || "{}");
-  if (!usuario?.email) return alert("❌ No hay correo asociado al usuario.");
-
-  try {
-    const res = await fetch("http://localhost:3000/enviar-correo", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        correo: usuario.email,
-        nombre: usuario.nombre_completo,
-        resultados: datosActuales
-      })
-    });
-
-    const data = await res.json();
-    if (data.success) {
-      alert("📧 Correo enviado correctamente a " + usuario.email);
-    } else {
-      alert("⚠️ No se pudo enviar el correo: " + data.message);
-    }
-  } catch (err) {
-    console.error(err);
-    alert("❌ Error al enviar el correo.");
-  }
-});
-
-// 📧 / 💬 Envío pendiente
-document.getElementById("btnWhatsApp").addEventListener("click", () => alert("💬 Envío por WhatsApp pendiente."));
-
-// 🔒 Cerrar sesión
-document.getElementById("cerrar-sesion").addEventListener("click", () => {
-  sessionStorage.removeItem("sesionActiva");
-  window.location.href = "home.html";
-});
-</script>
 </body>
+
 </html>

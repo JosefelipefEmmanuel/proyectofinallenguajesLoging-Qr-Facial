@@ -1,0 +1,33 @@
+# Dependencias y logs
+node_modules
+npm-debug.log
+*.log
+
+# Datos persistentes locales
+mysql_data
+mysql_data_dev
+mysql_data_prod
+uploads
+public/uploads
+public/temp
+
+# Variables y configuración local
+.env
+.DS_Store
+
+# Archivos de Docker
+Dockerfile
+docker-compose.yml
+docker-compose.dev.yml
+docker-compose.prod.yml
+
+# Control de versiones
+.git
+.gitignore
+
+# Archivos temporales o grandes
+*.zip
+*.pdf
+*.bak
+*.tar
+*.gz

@@ -5,3 +5,14 @@ tmp/
 uploads/ 
 .DS_Store 
 node_modules
+.env
+# Ignorar datos de MySQL
+mysql_data/
+*.sock
+*.pid
+*.err
+*.log
+
+# Archivos de entorno y dependencias
+node_modules/
+.env

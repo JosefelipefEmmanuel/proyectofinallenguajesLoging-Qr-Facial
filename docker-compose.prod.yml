@@ -1,0 +1,39 @@
+services:
+  # 🚀 Aplicación principal (Producción completa)
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile        # 👈 Usa el Dockerfile completo (no el .dev)
+      target: production            # 👈 Usa la etapa "production" del multi-stage build
+    container_name: faceapi_app_prod
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+    environment:
+      NODE_ENV: production
+      DB_HOST: db
+      DB_USER: root
+      DB_PASSWORD: 12345
+      DB_NAME: db_faceapi
+      DB_PORT: 3306
+    volumes:
+      - ./public/uploads:/app/public/uploads  # 🔒 Solo mantiene los archivos generados
+    command: npm start                        # 🔹 Ejecuta el server.js en modo normal
+
+  # 🐬 Base de datos MySQL 8 (Producción)
+  db:
+    image: mysql:8
+    container_name: db_faceapi_prod
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 12345
+      MYSQL_DATABASE: db_faceapi
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./mysql_data_prod:/var/lib/mysql     # 🗃️ Base de datos separada de desarrollo
+
+volumes:
+  mysql_data_prod:
