@@ -4,3 +4,4 @@ node_modules/
 tmp/ 
 uploads/ 
 .DS_Store 
+node_modules

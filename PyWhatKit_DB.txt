@@ -243,3 +243,8 @@ Time: 19:10
 Phone Number: +50237830931
 Message: Universidad Mariano Gálvez de GuatemalaHola Jose Felipe, tu carné digital UMG ha sido generado correctamente.Código: UMG-QR-227028Puedes descargar tus versiones aquí:Carné normal: http://localhost:3000/uploads/UMG-QR-227028_normal.pdfCarné con filtro: http://localhost:3000/uploads/UMG-QR-227028_filtro.pdfGracias por formar parte de la comunidad UMG.
 --------------------
+Date: 17/10/2025
+Time: 21:6
+Phone Number: +50237830931
+Message: Universidad Mariano Gálvez de GuatemalaHola Jose Felipe, tu carné digital UMG ha sido generado correctamente.Código: UMG-QR-970683Puedes descargar tus versiones aquí:Carné normal: http://localhost:3000/uploads/UMG-QR-970683_normal.pdfCarné con filtro: http://localhost:3000/uploads/UMG-QR-970683_filtro.pdfGracias por formar parte de la comunidad UMG.
+--------------------

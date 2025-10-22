@@ -1,4 +1,6 @@
-// script
+// ================================================================
+// 🚀 PROYECTO UMG - RECONOCIMIENTO FACIAL + ANALIZADOR LÉXICO
+// ================================================================
 
 // ===============================
 // 🔧 CONFIGURACIÓN GLOBAL
@@ -15,24 +17,23 @@ const DEVICE_CODE = '02'; // Identificador del dispositivo
 // 🧩 UTILIDADES
 // ===============================
 function showLoadingMessage(show) {
-  document.getElementById('loading-message').style.display = show ? 'block' : 'none';
+  const msg = document.getElementById('loading-message');
+  if (msg) msg.style.display = show ? 'block' : 'none';
 }
 
 function hideEmpresaForm() {
-  document.getElementById('empresa-selection').style.display = 'none';
+  const form = document.getElementById('empresa-selection');
+  if (form) form.style.display = 'none';
 }
-
-
 
 function capturePhoto(videoElement) {
   const canvas = document.createElement('canvas');
-  canvas.width = 400; // ✅ Más resolución = mejor detección
+  canvas.width = 400;
   canvas.height = 400;
   const ctx = canvas.getContext('2d');
   ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL('image/jpeg', 0.9); // más calidad
+  return canvas.toDataURL('image/jpeg', 0.9);
 }
-
 
 // ===============================
 // 🤖 CARGA DE MODELOS Y USUARIOS
@@ -75,7 +76,6 @@ async function loadUserDescriptor(label) {
     const blob = await res.blob();
     const img = await faceapi.bufferToImage(blob);
     const detection = await faceapi.detectSingleFace(img).withFaceLandmarks().withFaceDescriptor();
-
     if (detection) labeledFaceDescriptors.push(new faceapi.LabeledFaceDescriptors(label, [detection.descriptor]));
   } catch (err) {
     console.error(`Error cargando imagen de ${label}:`, err);
@@ -155,24 +155,17 @@ function stopCamera() {
 // 🚀 EVENTOS INICIALES
 // ===============================
 document.addEventListener("DOMContentLoaded", async () => {
-  const photoInput = document.getElementById("photo");
-  const preview = document.getElementById("preview-image");
-  const cameraPreview = document.getElementById("camera-preview");
-  const takePhotoBtn = document.getElementById("take-photo-btn");
-  const filterSelect = document.getElementById("filterSelect");
-  const applyFilterBtn = document.getElementById("apply-filter-btn");
   const empresaSelect = document.getElementById("empresaSelect");
 
-  // 🔸 Cargar lista de empresas
   try {
     const res = await fetch('/get-empresas');
     const empresas = await res.json();
     empresaSelect.innerHTML = empresas.map(e => `<option value="${e.id}">${e.nombre}</option>`).join('');
   } catch {
-    document.getElementById('error-message').textContent = "❌ No se pudieron cargar las empresas.";
+    const errMsg = document.getElementById('error-message');
+    if (errMsg) errMsg.textContent = "❌ No se pudieron cargar las empresas.";
   }
 
-  // 🔸 Selección de empresa
   document.getElementById('selectEmpresa').addEventListener('click', async () => {
     selectedEmpresaId = empresaSelect.value;
     if (!selectedEmpresaId) return alert("Seleccione una empresa primero.");
@@ -182,96 +175,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     document.getElementById('main-content').style.display = 'block';
   });
 
-  // 🔸 Botones de cámara
-  document.getElementById('start-camera').addEventListener('click', startCamera);
-  document.getElementById('stop-camera').addEventListener('click', stopCamera);
-
-  // 📷 Tomar foto
-  takePhotoBtn.addEventListener("click", async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-    cameraPreview.style.display = "block";
-    cameraPreview.srcObject = stream;
-
-    setTimeout(() => {
-      const canvas = document.createElement("canvas");
-      canvas.width = cameraPreview.videoWidth;
-      canvas.height = cameraPreview.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(cameraPreview, 0, 0);
-      stream.getTracks().forEach(t => t.stop());
-
-      canvas.toBlob(blob => {
-        const file = new File([blob], "captured.jpg", { type: "image/jpeg" });
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        photoInput.files = dt.files;
-        preview.src = URL.createObjectURL(file);
-        preview.style.display = "block";
-        cameraPreview.style.display = "none";
-      });
-    }, 1000);
-  });
-
-  // 🎨 Aplicar filtro
-  applyFilterBtn.addEventListener("click", () => {
-    const filtro = filterSelect.value;
-    if (!photoInput.files[0]) return alert("Sube o toma una foto primero.");
-
-    const reader = new FileReader();
-    reader.onload = function (e) {
-      const base = new Image();
-      base.onload = function () {
-        const canvas = document.createElement("canvas");
-        const ctx = canvas.getContext("2d");
-        canvas.width = base.width;
-        canvas.height = base.height;
-        ctx.drawImage(base, 0, 0);
-
-        if (filtro !== "ninguno") {
-          const overlay = new Image();
-          overlay.src = `/filtros/${filtro}.png`;
-          overlay.onload = () => {
-            ctx.drawImage(overlay, 0, 0, canvas.width, canvas.height);
-            canvas.toBlob(blob => {
-              const file = new File([blob], `filtered_${filtro}.png`, { type: "image/png" });
-              const dt = new DataTransfer();
-              dt.items.add(file);
-              photoInput.files = dt.files; // reemplaza el archivo original
-              preview.src = URL.createObjectURL(file);
-              console.log("✅ Filtro aplicado y actualizado correctamente.");
-            });
-          };
-        } else preview.src = e.target.result;
-      };
-      base.src = e.target.result;
-    };
-    reader.readAsDataURL(photoInput.files[0]);
-  });
-
-  // 📩 Enviar formulario de registro
-  document.getElementById("user-form").addEventListener("submit", async e => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    formData.append("filtro", filterSelect.value);
-    formData.append("empresaId", selectedEmpresaId);
-
-    showLoadingMessage(true);
-    try {
-      const res = await fetch("/api/registrar", { method: "POST", body: formData });
-      const data = await res.json();
-      alert(data.message);
-      if (data.success) {
-        preview.style.display = "none";
-        e.target.reset();
-        await loadLabeledImagesAsync();
-      }
-    } catch (err) {
-      console.error("❌ Error al registrar:", err);
-      alert("Error al conectar con el servidor.");
-    } finally {
-      showLoadingMessage(false);
-    }
-  });
+  // Cámara
+  document.getElementById('start-camera')?.addEventListener('click', startCamera);
+  document.getElementById('stop-camera')?.addEventListener('click', stopCamera);
 });
 
 // ===============================
@@ -295,7 +201,6 @@ async function handleRecognitionSuccess(nombre, video) {
   if (ok) {
     notifyUser(`✅ ${tipo.toUpperCase()} registrada para ${nombre}`);
     showCustomAlert(`✅ ${tipo.toUpperCase()}: ${nombre}`);
-    mostrarAccesoReconocido?.(nombre);
   }
 }
 
@@ -349,6 +254,7 @@ async function registerFailedAttempt(photoBase64) {
 // ===============================
 function notifyUser(message, isError = false) {
   const el = document.getElementById('recognition-result');
+  if (!el) return;
   el.textContent = message;
   el.style.display = 'block';
   el.style.backgroundColor = isError ? '#ffcccc' : '#ccffcc';
@@ -358,7 +264,98 @@ function notifyUser(message, isError = false) {
 
 function showCustomAlert(message) {
   const alertBox = document.getElementById('custom-alert');
+  if (!alertBox) return;
   alertBox.textContent = message;
   alertBox.style.display = 'block';
   setTimeout(() => alertBox.style.display = 'none', 4000);
 }
+
+// =============================================================
+// 🧠 MÓDULO INTEGRADO: ANALIZADOR LÉXICO MULTILINGÜE
+// =============================================================
+let datosActuales = null;
+
+document.getElementById("formAnalisis")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const formData = new FormData(e.target);
+
+  // ✅ Adjuntar usuario logueado
+  const usuarioSesion = JSON.parse(sessionStorage.getItem("sesionActiva") || "{}");
+  if (usuarioSesion?.id) formData.append("id_usuario", usuarioSesion.id);
+
+  const res = await fetch("http://localhost:3000/analizar", { method: "POST", body: formData });
+  const data = await res.json();
+  datosActuales = data;
+
+  const resumen = document.getElementById("resumen");
+  const resultados = document.getElementById("resultados");
+  const textoResaltado = document.getElementById("textoResaltado");
+  if (!resumen || !resultados || !textoResaltado) return;
+
+  resultados.style.display = "block";
+  resumen.innerHTML = `
+    <p><b>Idioma:</b> ${data.idioma}</p>
+    <p><b>Total palabras:</b> ${data.totalPalabras}</p>
+    <p><b>Total caracteres:</b> ${data.totalCaracteres}</p>
+    <p><b>Top palabras:</b> ${data.topPalabras.map(([w,c])=>w+" ("+c+")").join(", ")}</p>
+    <p><b>Menos frecuentes:</b> ${data.menosPalabras.map(([w,c])=>w+" ("+c+")").join(", ")}</p>
+    <p><b>Pronombres:</b> ${data.pronombres.join(", ")}</p>
+    <p><b>Personas:</b> ${data.personas.join(", ")}</p>
+    <p><b>Lugares:</b> ${data.lugares.join(", ")}</p>
+    <p><b>Sustantivos:</b> ${data.sustantivos.join(", ")}</p>
+    <p><b>Verbos:</b> ${data.verbos.join(", ")}</p>
+  `;
+
+  let texto = data.texto;
+  data.personas.forEach(p => texto = texto.replace(new RegExp(p, "gi"), `<mark class='persona'>${p}</mark>`));
+  data.lugares.forEach(l => texto = texto.replace(new RegExp(l, "gi"), `<mark class='lugar'>${l}</mark>`));
+  textoResaltado.innerHTML = `<h3>📝 Texto con entidades resaltadas</h3><p>${texto}</p>`;
+});
+
+// 🧹 LIMPIAR
+document.getElementById("limpiar")?.addEventListener("click", () => {
+  document.getElementById("resumen").innerHTML = "";
+  document.getElementById("textoResaltado").innerHTML = "";
+  document.getElementById("resultados").style.display = "none";
+  datosActuales = null;
+});
+
+// 📤 EXPORTAR (Genera PDF desde el servidor)
+document.getElementById("exportar")?.addEventListener("click", async () => {
+  if (!datosActuales) return alert("⚠️ Primero procesa un archivo antes de exportar.");
+
+  try {
+    const res = await fetch("http://localhost:3000/generar-pdf", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resultados: datosActuales })
+    });
+
+    if (!res.ok) throw new Error("Error generando el PDF");
+
+    // 🧾 Descargar el archivo generado
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `reporte_analisis_${Date.now()}.pdf`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+    alert("✅ PDF generado y descargado correctamente");
+  } catch (error) {
+    console.error("❌ Error al generar PDF:", error);
+    alert("❌ Error al generar el PDF.");
+  }
+});
+
+
+// 💾 GUARDAR
+document.getElementById("guardar")?.addEventListener("click", () => {
+  if (!datosActuales) return alert("Primero procesa un archivo.");
+  alert("✅ Análisis guardado automáticamente en la base de datos.");
+});
+
+// 📧 / 💬
+document.getElementById("btnCorreo")?.addEventListener("click", () => alert("📧 Envío por correo en desarrollo."));
+document.getElementById("btnWhatsApp")?.addEventListener("click", () => alert("💬 Envío por WhatsApp en desarrollo."));

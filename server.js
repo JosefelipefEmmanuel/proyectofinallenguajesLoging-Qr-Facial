@@ -11,6 +11,25 @@ const nodemailer = require("nodemailer");
 const QRCode = require("qrcode");
 const puppeteer = require("puppeteer");
 const db = require("./database");
+// ============================
+// 💾 CONEXIÓN SECUNDARIA — BASE LOCAL analizador_db
+// ============================
+const mysql = require("mysql2");
+const dbAnalisis = mysql.createConnection({
+  host: "localhost",
+  user: "root",
+  password: "josesitolqls", // tu clave local
+  database: "analizador_db"
+});
+
+dbAnalisis.connect((err) => {
+  if (err) {
+    console.error("❌ Error conectando con analizador_db:", err.message);
+  } else {
+    console.log("✅ Conectado exitosamente a la base de datos local analizador_db.");
+  }
+});
+
 const { Canvas, Image, ImageData, createCanvas, loadImage } = require("canvas");
 const faceapi = require("face-api.js");
 const Jimp = require("jimp");
@@ -337,11 +356,25 @@ app.post("/api/login", async (req, res) => {
           // ✅ 5. Si todo va bien
           console.log(`✅ Login exitoso para ${correo}. Token: ${token}`);
 
-          res.json({
-            success: true,
-            message: mensaje || "Inicio de sesión correcto.",
-            token,
-            usuario: { correo }, // para el sessionStorage en el HTML
+          // 🔹 Obtener los datos completos del usuario
+          db.query("SELECT id, nombre_completo, email, telefono FROM usuarios WHERE email = ? LIMIT 1", [correo], (err3, rows3) => {
+            if (err3 || !rows3.length) {
+              console.error("⚠️ No se pudo obtener información completa del usuario:", err3);
+              return res.json({
+                success: true,
+                message: mensaje || "Inicio de sesión correcto.",
+                token,
+                usuario: { correo }, // fallback
+              });
+            }
+
+            const user = rows3[0];
+            res.json({
+              success: true,
+              message: mensaje || "Inicio de sesión correcto.",
+              token,
+              usuario: user,
+            });
           });
         }
       );
@@ -367,9 +400,8 @@ app.post("/api/login-qr", (req, res) => {
   if (!codigo)
     return res.status(400).json({ success: false, message: "Código QR inválido" });
 
-  // Buscar el código en la tabla codigos_qr
   const sql = `
-    SELECT u.*
+    SELECT u.id, u.nombre_completo, u.email, u.telefono
     FROM codigos_qr q
     INNER JOIN usuarios u ON q.usuario_id = u.id
     WHERE q.codigo_qr = ? AND q.activo = 1
@@ -385,6 +417,7 @@ app.post("/api/login-qr", (req, res) => {
       return res.status(401).json({ success: false, message: "QR no registrado o inactivo" });
 
     const user = results[0];
+    console.log(`✅ Login QR exitoso para ${user.nombre_completo} (${user.email})`);
     res.json({
       success: true,
       message: `Bienvenido, ${user.nombre_completo}`,
@@ -392,6 +425,7 @@ app.post("/api/login-qr", (req, res) => {
     });
   });
 });
+
 
 // ============================
 // 🔍 Verificar carné QR (Base Centralizada)
@@ -473,21 +507,43 @@ app.post("/api/login-face", upload.single("rostro"), async (req, res) => {
 
       if (mejorCoincidencia && menorDistancia < 0.85) {
         console.log(`✅ Rostro reconocido: ${mejorCoincidencia.nombre_completo} (distancia ${menorDistancia.toFixed(2)})`);
-        return res.json({
-          success: true,
-          message: `Bienvenido, ${mejorCoincidencia.nombre_completo}`,
-          usuario: mejorCoincidencia
-        });
+
+        // 🔹 Obtener datos completos del usuario (para incluir email y teléfono)
+        db.query(
+          "SELECT id, nombre_completo, email, telefono FROM usuarios WHERE id = ? LIMIT 1",
+          [mejorCoincidencia.usuario_id],
+          (err2, rows2) => {
+            if (err2 || !rows2.length) {
+              console.error("⚠️ No se pudo obtener datos completos del usuario:", err2);
+              return res.json({
+                success: true,
+                message: `Bienvenido, ${mejorCoincidencia.nombre_completo}`,
+                usuario: mejorCoincidencia, // fallback
+              });
+            }
+
+            const user = rows2[0];
+            res.json({
+              success: true,
+              message: `Bienvenido, ${user.nombre_completo}`,
+              usuario: user,
+            });
+          }
+        );
       } else {
         console.log("❌ Ninguna coincidencia facial encontrada.");
         return res.status(401).json({ success: false, message: "Rostro no reconocido." });
       }
-    });
+
+    }); // ✅ cierre del db.query
+
   } catch (error) {
-    console.error("❌ Error en /api/login-face:", error);
-    res.status(500).json({ success: false, message: "Error en el reconocimiento facial." });
+    console.error("❌ Error general en /api/login-face:", error);
+    res.status(500).json({ success: false, message: "Error general del servidor." });
   }
-});
+}); // ✅ cierre del endpoint /api/login-face
+
+
 
 
 // ============================
@@ -653,7 +709,250 @@ function enviarWhatsApp(nombre1, apellido1, telefono, codigoQR) {
   }
 }
 
+// ============================
+// 🧠 ANALIZADOR LÉXICO MULTILINGÜE (Integrado con base local)
+// ============================
+const nlp = require("compromise");
 
+app.post("/analizar", upload.single("archivo"), async (req, res) => {
+  try {
+    const idioma = req.body.idioma?.toLowerCase() || "es";
+    const idUsuario = req.body.id_usuario || null;
+    const contenido = fs.readFileSync(req.file.path, "utf8");
+
+    // 🔤 Separar palabras según idioma
+    let palabras;
+    if (idioma.includes("chino") || idioma === "zh") {
+      palabras = contenido.match(/[\p{Script=Han}]/gu) || [];
+    } else if (idioma.includes("ruso") || idioma === "ru") {
+      palabras = contenido.match(/[\p{Script=Cyrillic}]+/gu) || [];
+    } else if (idioma.includes("arabe") || idioma === "ar") {
+      palabras = contenido.match(/[\p{Script=Arabic}]+/gu) || [];
+      if (palabras.length === 0) {
+        const limpia = contenido.replace(/[^\p{Script=Arabic}\s]/gu, "").trim();
+        palabras = limpia.split(/\s+/).filter(Boolean);
+      }
+    } else {
+      palabras = contenido.match(/\b[\wáéíóúüñ]+\b/g) || [];
+    }
+
+    const totalPalabras = palabras.length;
+    const totalCaracteres = contenido.length;
+
+    // 📊 Calcular frecuencia
+    const frecuencia = {};
+    palabras.forEach(p => {
+      const lower = p.toLowerCase();
+      frecuencia[lower] = (frecuencia[lower] || 0) + 1;
+    });
+
+    const topPalabras = Object.entries(frecuencia)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
+    const menosPalabras = Object.entries(frecuencia)
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, 10);
+
+    // 🧠 NLP — obtener categorías
+    const doc = nlp(contenido);
+    const pronombres = doc.pronouns().out("array") || [];
+    const personas = doc.people().out("array") || [];
+    const lugares = doc.places().out("array") || [];
+    const verbos = doc.verbs().out("array") || [];
+    const sustantivos = doc.nouns().out("array") || [];
+
+    // 💾 Guardar resultados en base local analizador_db
+    const sql = `
+      INSERT INTO analisis (
+        id_usuario, nombre_archivo, idioma, total_palabras, total_caracteres,
+        pronombres_json, entidades_json, lemas_json, fecha
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW());
+    `;
+    dbAnalisis.query(sql, [
+      idUsuario,
+      req.file.originalname,
+      idioma,
+      totalPalabras,
+      totalCaracteres,
+      JSON.stringify(pronombres),
+      JSON.stringify({ personas, lugares }),
+      JSON.stringify({ sustantivos, verbos })
+    ], (err) => {
+      if (err) console.error("⚠️ Error guardando en analizador_db:", err.message);
+      else console.log(`✅ Análisis guardado correctamente (${req.file.originalname})`);
+    });
+
+    // 📤 Responder al cliente
+    res.json({
+      idioma,
+      totalPalabras,
+      totalCaracteres,
+      topPalabras,
+      menosPalabras,
+      pronombres,
+      personas,
+      lugares,
+      verbos,
+      sustantivos,
+      texto: contenido
+    });
+
+    fs.unlinkSync(req.file.path); // elimina archivo temporal
+  } catch (error) {
+    console.error("❌ Error en /analizar:", error);
+    res.status(500).json({ error: "Error al procesar análisis" });
+  }
+});
+
+// ============================
+// 📄 GENERAR REPORTE PDF DEL ANÁLISIS
+// ============================
+const PDFDocument = require("pdfkit");
+
+app.post("/generar-pdf", async (req, res) => {
+  try {
+    const { resultados } = req.body;
+    if (!resultados) {
+      return res.status(400).json({ error: "No se recibieron datos para generar el PDF." });
+    }
+
+    // 📘 Crear el documento PDF
+    const doc = new PDFDocument({ margin: 50 });
+    const fileName = `reporte_analisis_${Date.now()}.pdf`;
+    const filePath = path.join(__dirname, "public", "uploads", fileName);
+
+    const stream = fs.createWriteStream(filePath);
+    doc.pipe(stream);
+
+    // 🧩 Encabezado
+    doc.fontSize(20).text("📊 REPORTE DE ANÁLISIS LÉXICO", { align: "center" });
+    doc.moveDown(1);
+
+    // 📋 Datos generales
+    doc.fontSize(12)
+      .text(`Idioma: ${resultados.idioma}`)
+      .text(`Total palabras: ${resultados.totalPalabras}`)
+      .text(`Total caracteres: ${resultados.totalCaracteres}`)
+      .moveDown();
+
+    // 🔝 Top palabras
+    doc.font("Helvetica-Bold").text("Top palabras más frecuentes:", { underline: true });
+    doc.font("Helvetica").list(resultados.topPalabras.map(([w, c]) => `${w} (${c})`));
+    doc.moveDown();
+
+    // 🔻 Menos frecuentes
+    doc.font("Helvetica-Bold").text("Palabras menos frecuentes:", { underline: true });
+    doc.font("Helvetica").list(resultados.menosPalabras.map(([w, c]) => `${w} (${c})`));
+    doc.moveDown();
+
+    // 💬 Pronombres, Personas, Sustantivos, Verbos
+    doc.text(`Pronombres: ${resultados.pronombres.join(", ") || "N/A"}`);
+    doc.text(`Personas: ${resultados.personas.join(", ") || "N/A"}`);
+    doc.text(`Lugares: ${resultados.lugares.join(", ") || "N/A"}`);
+    doc.text(`Sustantivos: ${resultados.sustantivos.join(", ") || "N/A"}`);
+    doc.text(`Verbos: ${resultados.verbos.join(", ") || "N/A"}`);
+    doc.moveDown(1);
+
+    // 📝 Texto analizado
+    doc.font("Helvetica-Bold").text("Texto analizado:", { underline: true });
+    doc.font("Helvetica").text(resultados.texto, { align: "justify" });
+
+    // 🏁 Cierre
+    doc.moveDown(2);
+    doc.fontSize(10).text("Generado automáticamente por el Sistema de Análisis Léxico Multilingüe — UMG 2025", {
+      align: "center",
+    });
+
+    doc.end();
+
+    // 📨 Enviar el archivo generado
+    stream.on("finish", () => {
+      res.download(filePath, fileName, (err) => {
+        if (err) console.error("⚠️ Error al enviar PDF:", err);
+        fs.unlinkSync(filePath); // elimina después de descargar
+      });
+    });
+  } catch (error) {
+    console.error("❌ Error generando PDF:", error);
+    res.status(500).json({ error: "Error al generar el PDF." });
+  }
+});
+
+
+
+// ============================
+// 📧 Enviar resultados del análisis por correo
+// ============================
+app.post("/enviar-correo", async (req, res) => {
+  try {
+    const { correo, nombre, resultados } = req.body;
+    if (!correo || !resultados) {
+      return res.status(400).json({ success: false, message: "Faltan datos" });
+    }
+
+    // Crear PDF temporal del análisis
+    const PDFDocument = require("pdfkit");
+    const pdfPath = path.join(__dirname, "public", "uploads", `analisis_${Date.now()}.pdf`);
+    const doc = new PDFDocument();
+    const stream = fs.createWriteStream(pdfPath);
+    doc.pipe(stream);
+
+    doc.fontSize(18).text("📊 REPORTE DE ANÁLISIS LÉXICO", { align: "center" }).moveDown();
+    doc.fontSize(12).text(`Usuario: ${nombre}`);
+    doc.text(`Correo: ${correo}`).moveDown();
+    doc.text(`Idioma: ${resultados.idioma}`);
+    doc.text(`Total palabras: ${resultados.totalPalabras}`);
+    doc.text(`Total caracteres: ${resultados.totalCaracteres}`).moveDown();
+
+    doc.text("Top palabras más frecuentes:");
+    resultados.topPalabras.forEach(([w, c]) => doc.text(`- ${w}: ${c}`));
+    doc.moveDown();
+
+    doc.text("Palabras menos frecuentes:");
+    resultados.menosPalabras.forEach(([w, c]) => doc.text(`- ${w}: ${c}`));
+    doc.moveDown();
+
+    doc.text(`Pronombres: ${resultados.pronombres.join(", ")}`);
+    doc.text(`Personas: ${resultados.personas.join(", ")}`);
+    doc.text(`Lugares: ${resultados.lugares.join(", ")}`);
+    doc.text(`Sustantivos: ${resultados.sustantivos.join(", ")}`);
+    doc.text(`Verbos: ${resultados.verbos.join(", ")}`).moveDown();
+    doc.text("Texto original analizado:").moveDown();
+    doc.font("Helvetica-Oblique").text(resultados.texto, { align: "justify" });
+    doc.end();
+
+    stream.on("finish", async () => {
+      // Configura tu correo de envío (usa el mismo que para carnés)
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: "joseemmanuelfelipefranco@gmail.com",
+          pass: "mrmuwhetqsyxhend", // contraseña de app de Gmail
+        },
+      });
+
+      await transporter.sendMail({
+        from: '"UMG - Analizador Léxico" <joseemmanuelfelipefranco@gmail.com>',
+        to: correo,
+        cc: "proyecto.umg@gmail.com", // copia al correo del grupo
+        subject: "📊 Resultados del Análisis Léxico UMG",
+        html: `<p>Hola <b>${nombre}</b>,</p>
+               <p>Adjuntamos tu reporte en PDF con los resultados del análisis léxico realizado en el sistema UMG.</p>
+               <p>Gracias por utilizar la plataforma.</p>`,
+        attachments: [
+          { filename: "analisis.pdf", path: pdfPath }
+        ],
+      });
+
+      fs.unlinkSync(pdfPath); // elimina PDF temporal
+      res.json({ success: true });
+    });
+
+  } catch (error) {
+    console.error("❌ Error al enviar correo:", error);
+    res.status(500).json({ success: false, message: "Error interno del servidor" });
+  }
+});
 
 // ============================
 // 🚀 Iniciar servidor
@@ -671,3 +970,4 @@ async function canvasLoadImage(filePath) {
   ctx.drawImage(img, 0, 0);
   return canvas;
 }
+
